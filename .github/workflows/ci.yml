@@ -147,7 +147,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build/bin/LiteTalk-amd64-installer.exe dist/LiteTalk-windows-amd64-setup.exe
+          # 安装器文件名随 wails 版本/平台可能不同，用通配符查找而非硬编码
+          $installer = Get-ChildItem build/bin/*-installer.exe | Select-Object -First 1
+          if (-not $installer) {
+            Write-Host "build/bin 内容："
+            Get-ChildItem build/bin | Format-Table Name, Length
+            throw "未找到 *-installer.exe"
+          }
+          Write-Host "安装器: $($installer.Name)"
+          Copy-Item $installer.FullName dist/LiteTalk-windows-amd64-setup.exe
           Compress-Archive -Path build/bin/LiteTalk.exe -DestinationPath dist/LiteTalk-windows-amd64-portable.zip
       - uses: actions/upload-artifact@v4
         with:
