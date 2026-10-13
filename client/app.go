@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"os"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/OpenALC/LiteTalk/client/internal/audio"
+	"github.com/OpenALC/LiteTalk/client/internal/config"
 	"github.com/OpenALC/LiteTalk/client/internal/state"
 	"github.com/OpenALC/LiteTalk/client/internal/tray"
 	"github.com/gen2brain/malgo"
@@ -23,6 +25,9 @@ var version = "dev"
 // 导出方法经 Wails Bind 暴露给前端调用（落地方案 §4.6）。
 type App struct {
 	ctx context.Context
+
+	// cfg 本地配置（config.json：服务器地址 / 休眠开关持久化）。
+	cfg *config.Manager
 
 	// hibernateOnMinimize 设置项「最小化时休眠界面（省内存）」，默认关闭。
 	hibernateOnMinimize bool
@@ -42,17 +47,26 @@ type App struct {
 
 // NewApp 创建应用实例
 func NewApp() *App {
-	return &App{}
+	return &App{cfg: config.New()}
+}
+
+// newAppWithConfig 测试用：注入指定路径的配置管理器。
+func newAppWithConfig(m *config.Manager) *App {
+	return &App{cfg: m}
 }
 
 // startup 启动回调：保存上下文、创建 API 客户端、启动系统托盘。
+// 服务器地址优先级：环境变量 LITETALK_API > config.json > 默认本机（运维/调试最高）。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	base := os.Getenv("LITETALK_API")
-	if base == "" {
-		base = "http://127.0.0.1:8077"
-	}
+	r := a.cfg.Resolve()
+	base := r.BaseURL
 	a.api = state.NewAPIClient(base)
+
+	// 恢复持久化的休眠开关。
+	if h := a.cfg.Get().HibernateOnMinimize; h != nil {
+		a.hibernateOnMinimize = *h
+	}
 
 	// 托盘独占 goroutine（systray.Run 需要自己的消息循环）。
 	go tray.Run(tray.Callbacks{
@@ -122,10 +136,14 @@ func (a *App) WindowClose() {
 
 // ---------- 设置 ----------
 
-// SetHibernateOnMinimize 设置「最小化时休眠界面」开关。
+// SetHibernateOnMinimize 设置「最小化时休眠界面」开关（持久化到 config.json）。
 // 前端监听 sys:hibernate / sys:wake 事件切换休眠态（见 stores/hibernate.ts）。
 func (a *App) SetHibernateOnMinimize(enabled bool) {
 	a.hibernateOnMinimize = enabled
+	_ = a.cfg.Update(func(c *config.Config) error {
+		c.HibernateOnMinimize = &enabled
+		return nil
+	})
 }
 
 // GetHibernateOnMinimize 读取「最小化时休眠界面」开关
@@ -133,6 +151,68 @@ func (a *App) GetHibernateOnMinimize() bool { return a.hibernateOnMinimize }
 
 // GetVersion 返回客户端版本号
 func (a *App) GetVersion() string { return version }
+
+// ---------- 服务器地址配置（设置页「连接」分组） ----------
+
+// ServerConfigView 当前生效的服务器地址与来源。
+type ServerConfigView struct {
+	BaseURL string `json:"base_url"`
+	WSURL   string `json:"ws_url"`
+	Source  string `json:"source"` // env / file / default
+}
+
+// GetServerConfig 返回实际生效的服务器地址与来源（env 优先于 config.json）。
+func (a *App) GetServerConfig() *ServerConfigView {
+	r := a.cfg.Resolve()
+	return &ServerConfigView{BaseURL: r.BaseURL, WSURL: r.WSURL, Source: string(r.Source)}
+}
+
+// SetServerConfig 保存服务器地址（WS 自动推导：https→wss、http→ws，末尾补 /ws）。
+// 重启后生效——运行中热切换信令/REST 连接成本高，不做即时切换。
+func (a *App) SetServerConfig(baseURL string) error {
+	if err := config.ValidateBase(baseURL); err != nil {
+		return err
+	}
+	return a.cfg.Update(func(c *config.Config) error {
+		c.ServerBase = baseURL
+		return nil
+	})
+}
+
+// ConnTestResult 连通性测试结果。
+type ConnTestResult struct {
+	OK       bool   `json:"ok"`
+	Latency  int64  `json:"latency_ms"`
+	Version  string `json:"version"`
+	ErrorMsg string `json:"error"`
+}
+
+// TestServerConnection 测试服务器连通性：GET <base>/api/v1/healthz（3s 超时）。
+// 用于设置页「测试连接」，可对未保存的地址直接测试。
+func (a *App) TestServerConnection(baseURL string) *ConnTestResult {
+	if err := config.ValidateBase(baseURL); err != nil {
+		return &ConnTestResult{OK: false, ErrorMsg: err.Error()}
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	start := time.Now()
+	resp, err := client.Get(baseURL + "/api/v1/healthz")
+	if err != nil {
+		return &ConnTestResult{OK: false, ErrorMsg: "连接失败"}
+	}
+	defer resp.Body.Close()
+	latency := time.Since(start).Milliseconds()
+	if resp.StatusCode != http.StatusOK {
+		return &ConnTestResult{OK: false, Latency: latency, ErrorMsg: fmt.Sprintf("服务端返回 %d", resp.StatusCode)}
+	}
+	var body struct {
+		Status  string `json:"status"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return &ConnTestResult{OK: true, Latency: latency} // 可达但响应格式异常：仍算连通
+	}
+	return &ConnTestResult{OK: true, Latency: latency, Version: body.Version}
+}
 
 // ---------- 认证（转发 REST，§5.4） ----------
 
@@ -276,10 +356,7 @@ func (a *App) connectSession(token, nickname string) error {
 			runtime.EventsEmit(a.ctx, "voice:self", userID)
 		},
 	}
-	server := os.Getenv("LITETALK_WS")
-	if server == "" {
-		server = "ws://127.0.0.1:8077/ws"
-	}
+	server := a.cfg.Resolve().WSURL
 	sess := state.NewSession(a.api, token, nickname, ev, log.Default())
 	if err := sess.Connect(server); err != nil {
 		return err

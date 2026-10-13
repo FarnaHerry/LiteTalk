@@ -34,3 +34,18 @@ export interface ChatMessage {
   content: string
   ts: string
 }
+
+// ConnConfigView 当前生效的服务器地址与来源（设置页「连接」）。
+export interface ConnConfigView {
+  base_url: string
+  ws_url: string
+  source: 'env' | 'file' | 'default'
+}
+
+// ConnTestResult 连通性测试结果。
+export interface ConnTestResult {
+  ok: boolean
+  latency_ms: number
+  version: string
+  error: string
+}

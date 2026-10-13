@@ -35,6 +35,11 @@ Go + Wails v2 桌面端：音频采集/降噪/Opus 编解码、WebRTC 通话、V
 设置 → 音频设备下拉即时生效：设备流重启，编解码/混音/通话状态保留。
 设备失效时自动回退系统默认设备。
 
+## 服务器地址配置
+
+设置 → 连接：填服务器地址（如 `https://your-domain.com`）→ 测试连接 → 保存后重启生效；WS 信令地址自动推导。
+环境变量 `LITETALK_API` / `LITETALK_WS` 优先级最高（覆盖配置文件）；持久化在 `os.UserConfigDir()/LiteTalk/config.json`（Windows 即 `%APPDATA%\LiteTalk\config.json`）。
+
 ## 开发
 
 ```powershell

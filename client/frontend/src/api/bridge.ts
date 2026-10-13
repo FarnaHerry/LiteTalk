@@ -1,12 +1,15 @@
 // bridge 封装 Wails Go 绑定（window.go.main.App.*）。
 // 浏览器独立开发（vite dev 无 Go 后端）时走 mock 桩，行为可联调 UI。
-import type { AuthResult, PeerView, ServerConfig, UserProfile } from './types'
+import type { AuthResult, ConnConfigView, ConnTestResult, PeerView, ServerConfig, UserProfile } from './types'
 
 type GoApp = {
   GetVersion(): Promise<string>
   GetAuthConfig(): Promise<ServerConfig>
   GetHibernateOnMinimize(): Promise<boolean>
   SetHibernateOnMinimize(enabled: boolean): Promise<void>
+  GetServerConfig(): Promise<ConnConfigView>
+  SetServerConfig(baseURL: string): Promise<void>
+  TestServerConnection(baseURL: string): Promise<ConnTestResult>
   WindowMinimize(): Promise<void>
   WindowMaximize(): Promise<void>
   WindowClose(): Promise<void>
@@ -49,6 +52,13 @@ const mockApp: GoApp = {
   async GetAuthConfig() { return { auth_mode: 'full', mail_configured: false } },
   async GetHibernateOnMinimize() { return false },
   async SetHibernateOnMinimize() {},
+  async GetServerConfig() {
+    return { base_url: 'http://127.0.0.1:8077', ws_url: 'ws://127.0.0.1:8077/ws', source: 'default' as const }
+  },
+  async SetServerConfig() {},
+  async TestServerConnection() {
+    return { ok: true, latency_ms: 12, version: 'dev', error: '' }
+  },
   async WindowMinimize() {},
   async WindowMaximize() {},
   async WindowClose() {},
