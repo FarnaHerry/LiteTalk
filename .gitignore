@@ -10,3 +10,19 @@ Desktop.ini
 
 # Logs
 *.log
+
+# 本地-only 材料（不进入远程仓库）
+docs/
+prototype/
+.playwright-mcp/
+/*.png
+/*.jpg
+
+# Node / 前端
+node_modules/
+client/frontend/dist/
+
+# Go / Wails 构建产物
+client/build/bin/
+dist/
+*.exe

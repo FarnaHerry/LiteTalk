@@ -1,0 +1,82 @@
+/* 轻音 LiteTalk 设计 Token
+   与团队设计文档及高保真原型 :root 定义对齐 */
+:root {
+  --brand-50: #EFF5FA;
+  --brand-200: #C8E3F5;
+  --brand-500: #4FA4F3;
+  --brand-600: #3E96EC;
+  --brand-700: #2E7FD1;
+  --ink-900: #17324B;
+  --ink-600: #3D5A76;
+  --ink-400: #7E97AE;
+  --ink-300: #A9BCCF;
+  --surface: #FFFFFF;
+  --line: #DCE9F6;
+  --green: #3FB57F;
+  --red: #E85B5B;
+  --orange: #F0A54C;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --shadow-1: 0 2px 8px rgba(23, 50, 75, 0.05);
+  --shadow-2: 0 8px 24px rgba(23, 50, 75, 0.08);
+  --shadow-3: 0 16px 48px rgba(23, 50, 75, 0.12);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  color: var(--ink-900);
+  font-size: 14px;
+  background: var(--brand-50);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--brand-200);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-300);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 尊重系统减弱动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,326 @@
+# 轻音 LiteTalk CI/CD
+# 单共享工作流：push / workflow_dispatch 只做检查；推送 v* 标签追加打包与 GitHub Release 发版。
+#
+# 注：本机开发（国内）Go 模块代理用 goproxy.cn（go env -w GOPROXY=https://goproxy.cn,direct），
+#     前端走项目级 .npmrc 的 npmmirror；CI runner 在境外，Go/npm 均保持默认源。
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.27'
+  NODE_VERSION: '22'
+
+jobs:
+  # ---------------- 日常检查（每次 push 都跑） ----------------
+
+  check-server:
+    name: 服务端检查
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # 服务端 M0 零第三方依赖、无 go.sum，关闭缓存
+          cache: false
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: go build
+        run: go build ./...
+
+  check-client:
+    name: 客户端检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Wails v2 在 Linux 编译依赖 GTK/WebKitGTK 头文件；
+      # ubuntu-latest（24.04）只有 webkit2gtk-4.1，对应 wails 构建标签 webkit2_41
+      - name: 安装 GTK/WebKitGTK 开发库
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      # pnpm 版本由 client/frontend/package.json 的 packageManager 字段决定
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: client/frontend/pnpm-lock.yaml
+      - name: 安装前端依赖
+        working-directory: client/frontend
+        run: pnpm install --frozen-lockfile
+      # main.go 中 //go:embed all:frontend/dist 依赖产物，前端构建必须在 go vet 之前
+      - name: 构建前端
+        working-directory: client/frontend
+        run: pnpm run build
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+      - name: go vet
+        working-directory: client
+        run: go vet -tags webkit2_41 ./...
+      - name: go test
+        working-directory: client
+        run: go test -tags webkit2_41 ./...
+      - name: go build
+        working-directory: client
+        run: go build -tags webkit2_41 ./...
+
+  # ---------------- 打包发版（仅 v* 标签） ----------------
+
+  package-server:
+    name: 服务端打包（linux amd64 / arm64）
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: 交叉编译（CGO_ENABLED=0，注入版本号）
+        working-directory: server
+        run: |
+          mkdir -p ../dist/linux-amd64 ../dist/linux-arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o ../dist/linux-amd64/litetalk-server ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o ../dist/linux-arm64/litetalk-server ./cmd/server
+      - name: 打包 tar.gz
+        working-directory: dist
+        run: |
+          tar -C linux-amd64 -czf litetalk-server-linux-amd64.tar.gz litetalk-server
+          tar -C linux-arm64 -czf litetalk-server-linux-arm64.tar.gz litetalk-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-server
+          path: dist/*.tar.gz
+
+  package-client-windows:
+    name: Windows 客户端打包
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: client/frontend/pnpm-lock.yaml
+      - name: 安装 wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: 安装前端依赖
+        working-directory: client/frontend
+        run: pnpm install --frozen-lockfile
+      # windows-latest 镜像自带 NSIS，此处做存在性检查，缺失时尽早失败
+      - name: 检查 NSIS
+        run: makensis /VERSION
+      - name: wails build（含 NSIS 安装器）
+        working-directory: client
+        run: wails build -platform windows/amd64 -nsis
+      - name: 整理产物（安装器 + 绿色版 zip）
+        working-directory: client
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/bin/LiteTalk-amd64-installer.exe dist/LiteTalk-windows-amd64-setup.exe
+          Compress-Archive -Path build/bin/LiteTalk.exe -DestinationPath dist/LiteTalk-windows-amd64-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-client-windows
+          path: client/dist/*
+
+  package-client-linux-amd64:
+    name: Linux amd64 客户端打包
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      ARCH: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 GTK/WebKitGTK 开发库
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: client/frontend/pnpm-lock.yaml
+      - name: 安装 wails CLI 与 nfpm
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+      - name: 安装前端依赖
+        working-directory: client/frontend
+        run: pnpm install --frozen-lockfile
+      - name: wails build
+        working-directory: client
+        run: wails build -platform linux/amd64 -tags webkit2_41
+      - name: 绿色版 tar.gz
+        working-directory: client
+        run: |
+          mkdir -p dist
+          tar -C build/bin -czf dist/LiteTalk-linux-amd64-portable.tar.gz LiteTalk
+      # nfpm 的 ${ARCH} / ${VERSION} 从环境变量注入；deb/rpm 版本号去掉 v 前缀
+      - name: 解析版本号
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      # deb 惯例命名 litetalk_<ver>_<arch>.deb 已符合 §14.4；
+      # rpm 惯例命名为 litetalk-<ver>-1.<rpm-arch>.rpm，重命名为 litetalk_<ver>_<arch>.rpm
+      - name: deb / rpm（nfpm）
+        working-directory: client
+        run: |
+          nfpm package --config build/nfpm.yaml --packager deb --target dist/
+          nfpm package --config build/nfpm.yaml --packager rpm --target dist/
+          mv dist/*.rpm "dist/litetalk_${VERSION}_${ARCH}.rpm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-client-linux-amd64
+          path: client/dist/*
+
+  package-client-linux-arm64:
+    name: Linux arm64 客户端打包
+    if: startsWith(github.ref, 'refs/tags/v')
+    # WebKitGTK CGo 交叉链脆弱，使用 ARM 原生 runner
+    runs-on: ubuntu-24.04-arm
+    env:
+      ARCH: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 GTK/WebKitGTK 开发库
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: client/frontend/pnpm-lock.yaml
+      - name: 安装 wails CLI 与 nfpm
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+      - name: 安装前端依赖
+        working-directory: client/frontend
+        run: pnpm install --frozen-lockfile
+      - name: wails build
+        working-directory: client
+        run: wails build -platform linux/arm64 -tags webkit2_41
+      - name: 绿色版 tar.gz
+        working-directory: client
+        run: |
+          mkdir -p dist
+          tar -C build/bin -czf dist/LiteTalk-linux-arm64-portable.tar.gz LiteTalk
+      - name: 解析版本号
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: deb / rpm（nfpm）
+        working-directory: client
+        run: |
+          nfpm package --config build/nfpm.yaml --packager deb --target dist/
+          nfpm package --config build/nfpm.yaml --packager rpm --target dist/
+          mv dist/*.rpm "dist/litetalk_${VERSION}_${ARCH}.rpm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-client-linux-arm64
+          path: client/dist/*
+
+  package-client-macos:
+    name: macOS 客户端打包（非阻塞）
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    # 非阻塞项：失败不影响整体结果与发版
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: client/frontend/pnpm-lock.yaml
+      - name: 安装 wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: 安装前端依赖
+        working-directory: client/frontend
+        run: pnpm install --frozen-lockfile
+      - name: wails build
+        working-directory: client
+        run: wails build -platform darwin/arm64
+      - name: 打包 .app
+        working-directory: client
+        run: |
+          mkdir -p dist
+          cd build/bin && zip -r -X ../../dist/LiteTalk-macos-arm64.zip LiteTalk.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-client-macos
+          path: client/dist/*
+
+  release:
+    name: 发布 GitHub Release
+    needs:
+      - package-server
+      - package-client-windows
+      - package-client-linux-amd64
+      - package-client-linux-arm64
+      - package-client-macos
+    # always() 保证 macOS（continue-on-error）失败不阻断；
+    # 显式检查 4 个阻塞打包 job：Windows / Linux / 服务端任一失败则不发版
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.package-server.result == 'success' && needs.package-client-windows.result == 'success' && needs.package-client-linux-amd64.result == 'success' && needs.package-client-linux-arm64.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 汇总全部打包产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

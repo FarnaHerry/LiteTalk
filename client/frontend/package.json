@@ -1,0 +1,25 @@
+{
+  "name": "litetalk-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.10.1",
+  "//": "typescript 锁 5.9 次版本：TS 7 为原生移植版，与 vue-tsc 3.x 不兼容（ERR_PACKAGE_PATH_NOT_EXPORTED），勿升到 ^ 浮动",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-vue-next": "^0.577.0",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "~5.9.0",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.13"
+  }
+}

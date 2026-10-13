@@ -1,0 +1,32 @@
+# nfpm 打包配置（deb / rpm）
+# ${ARCH} / ${VERSION} 由 CI 环境变量注入（VERSION 已去掉 v 前缀）
+name: litetalk
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: OpenALC
+homepage: https://github.com/OpenALC/LiteTalk
+vendor: OpenALC
+description: |
+  轻音 LiteTalk 桌面语音联机客户端。
+  基于 Wails v2 构建，运行时依赖 WebKitGTK 与 PortAudio / libopus。
+contents:
+  - src: ./build/bin/LiteTalk
+    dst: /usr/bin/litetalk
+    file_info:
+      mode: 0755
+overrides:
+  deb:
+    depends:
+      - libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37
+      - libgtk-3-0
+      - libportaudio2
+      - libopus0
+  rpm:
+    depends:
+      - webkit2gtk4.1
+      - gtk3
+      - portaudio
+      - opus
