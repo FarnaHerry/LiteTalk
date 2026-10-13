@@ -37,8 +37,11 @@ const (
 
 // Config config.json 的持久化结构。
 type Config struct {
-	ServerBase        string `json:"server_base,omitempty"`         // 服务端基址，如 https://example.com
-	HibernateOnMinimize *bool `json:"hibernate_on_minimize,omitempty"` // 最小化时休眠界面
+	ServerBase          string `json:"server_base,omitempty"`            // 服务端基址，如 https://example.com
+	HibernateOnMinimize *bool  `json:"hibernate_on_minimize,omitempty"`  // 最小化时休眠界面
+	CloseToTray         *bool  `json:"close_to_tray,omitempty"`          // 关闭窗口时最小化到托盘（默认 true；false=退出程序）
+	SavedEmail          string `json:"saved_email,omitempty"`            // 记住的登录邮箱
+	EncPassword         string `json:"enc_password,omitempty"`           // 记住的密码（DPAPI 密文 base64；非 Windows 恒空）
 }
 
 // Manager 读写配置文件（路径：os.UserConfigDir()/LiteTalk/config.json）。
@@ -194,4 +197,70 @@ func ValidateBase(base string) error {
 		return errors.New("服务器地址需以 http:// 或 https:// 开头")
 	}
 	return nil
+}
+
+// ---------- 关闭行为（问题 4b：托盘 / 退出程序，用户可选） ----------
+
+// CloseToTray 返回关闭窗口行为：true=最小化到托盘（默认），false=退出程序。
+func (m *Manager) CloseToTray() bool {
+	v := m.Get().CloseToTray
+	return v == nil || *v
+}
+
+// SetCloseToTray 持久化关闭窗口行为。
+func (m *Manager) SetCloseToTray(v bool) error {
+	return m.Update(func(c *Config) error {
+		c.CloseToTray = &v
+		return nil
+	})
+}
+
+// ---------- 记住密码（问题 6：DPAPI 加密存储） ----------
+
+// SavedCredentials 已保存的登录凭据（Password 仅非空时为已记住）。
+type SavedCredentials struct {
+	Email    string
+	Password string
+	Saved    bool
+}
+
+// GetSavedCredentials 读取记住的凭据。密码经 DPAPI 解密；
+// 解密失败/非 Windows 平台返回空密码（只记邮箱）。
+func (m *Manager) GetSavedCredentials() SavedCredentials {
+	c := m.Get()
+	if c.SavedEmail == "" {
+		return SavedCredentials{}
+	}
+	pw := ""
+	if c.EncPassword != "" {
+		if plain, err := unprotectString(c.EncPassword); err == nil {
+			pw = plain
+		}
+	}
+	return SavedCredentials{Email: c.SavedEmail, Password: pw, Saved: true}
+}
+
+// SetSavedCredentials 保存凭据：邮箱明文、密码 DPAPI 加密（user scope）。
+// 加密失败（非 Windows）只记邮箱不记密码。
+func (m *Manager) SetSavedCredentials(email, password string) error {
+	enc := ""
+	if password != "" {
+		if s, err := protectString(password); err == nil {
+			enc = s
+		}
+	}
+	return m.Update(func(c *Config) error {
+		c.SavedEmail = email
+		c.EncPassword = enc
+		return nil
+	})
+}
+
+// ClearSavedCredentials 清除记住的凭据（取消勾选/登出时调用）。
+func (m *Manager) ClearSavedCredentials() error {
+	return m.Update(func(c *Config) error {
+		c.SavedEmail = ""
+		c.EncPassword = ""
+		return nil
+	})
 }

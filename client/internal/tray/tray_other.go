@@ -6,6 +6,7 @@ package tray
 
 // Callbacks 托盘菜单回调（与 Windows 实现同形）。
 type Callbacks struct {
+	OnReady      func()      // 就绪回调（空实现永不触发 → app 侧 trayReady 恒 false）
 	OnShow       func()      // 显示主界面
 	OnToggleMute func() bool // 切换静音，返回切换后状态
 	OnQuit       func()      // 真正退出应用

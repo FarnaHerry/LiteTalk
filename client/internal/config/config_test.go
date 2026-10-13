@@ -28,6 +28,47 @@ func TestSaveLoad(t *testing.T) {
 	}
 }
 
+// TestCloseToTray 关闭行为默认托盘、可切换持久化（问题 4b）。
+func TestCloseToTray(t *testing.T) {
+	m := tmpManager(t)
+	if !m.CloseToTray() {
+		t.Fatal("默认应为最小化到托盘")
+	}
+	if err := m.SetCloseToTray(false); err != nil {
+		t.Fatalf("SetCloseToTray: %v", err)
+	}
+	m2 := NewWithPath(m.Path())
+	if m2.CloseToTray() {
+		t.Fatal("关闭行为未持久化为退出程序")
+	}
+}
+
+// TestSavedCredentials 凭据存取与清除（问题 6b）。
+// Windows 上密码经 DPAPI 往返还原；非 Windows 只记邮箱（密码为空）。
+func TestSavedCredentials(t *testing.T) {
+	m := tmpManager(t)
+	if c := m.GetSavedCredentials(); c.Saved {
+		t.Fatal("初始不应有已存凭据")
+	}
+	if err := m.SetSavedCredentials("u@example.com", "p@ssw0rd123"); err != nil {
+		t.Fatalf("SetSavedCredentials: %v", err)
+	}
+	m2 := NewWithPath(m.Path())
+	c := m2.GetSavedCredentials()
+	if !c.Saved || c.Email != "u@example.com" {
+		t.Fatalf("凭据读回异常: %+v", c)
+	}
+	if c.Password != "" && c.Password != "p@ssw0rd123" {
+		t.Fatalf("密码解密不一致: %q", c.Password)
+	}
+	if err := m2.ClearSavedCredentials(); err != nil {
+		t.Fatalf("ClearSavedCredentials: %v", err)
+	}
+	if c := NewWithPath(m.Path()).GetSavedCredentials(); c.Saved {
+		t.Fatal("清除后仍返回已存凭据")
+	}
+}
+
 func TestCorruptFileFallsBack(t *testing.T) {
 	m := tmpManager(t)
 	if err := os.MkdirAll(filepath.Dir(m.Path()), 0o755); err != nil {

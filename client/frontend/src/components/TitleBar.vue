@@ -1,8 +1,14 @@
 <script setup lang="ts">
 // TitleBar 自定义标题栏（无边框窗口拖拽区 + 最小化/最大化/关闭）。
 // Wails v2 无边框窗口：CSS -webkit-app-region: drag。
+// 关闭走 useWindowClose：首次关窗提示「已最小化到托盘」（问题 4d）。
+import { ref } from 'vue'
 import { Minus, Square, X, AudioWaveform } from 'lucide-vue-next'
 import { goApp } from '../api/bridge'
+import { closeWithHint } from '../composables/useWindowClose'
+import Toast from './Toast.vue'
+
+const toast = ref<InstanceType<typeof Toast>>()
 </script>
 
 <template>
@@ -12,8 +18,9 @@ import { goApp } from '../api/bridge'
     <div class="tb-controls">
       <button title="最小化" @click="goApp().WindowMinimize()"><Minus :size="15" /></button>
       <button title="最大化" @click="goApp().WindowMaximize()"><Square :size="15" /></button>
-      <button class="tb-close" title="关闭到托盘" @click="goApp().WindowClose()"><X :size="15" /></button>
+      <button class="tb-close" title="关闭" @click="closeWithHint(toast)"><X :size="15" /></button>
     </div>
+    <Toast ref="toast" />
   </header>
 </template>
 

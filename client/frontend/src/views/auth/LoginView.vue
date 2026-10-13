@@ -1,10 +1,13 @@
 <script setup lang="ts">
-// LoginView 登录页（对齐 Auth.html：分段切换登录/注册、记住我、忘记密码）。
-import { reactive, ref } from 'vue'
+// LoginView 登录页（对齐 Auth.html：分段切换登录/注册、记住密码、忘记密码）。
+// 记住密码（问题 6）：启动自动填充（不自动登录）；成功登录且勾选→保存；
+// 取消勾选→清除已存凭据。密码经 DPAPI 加密落盘（Go 侧）。
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Eye, EyeOff, LockKeyhole, Mail, Check } from 'lucide-vue-next'
 import AuthLayout from './AuthLayout.vue'
 import Toast from '../../components/Toast.vue'
+import { goApp } from '../../api/bridge'
 import { useAuthStore } from '../../stores/auth'
 import './auth-forms.css'
 
@@ -19,6 +22,25 @@ const loading = ref(false)
 
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+onMounted(async () => {
+  // 自动填充记住的凭据（不自动登录，用户手动点登录）。
+  try {
+    const c = await goApp().GetSavedCredentials()
+    if (c.saved) {
+      form.email = c.email
+      if (c.password) form.password = c.password
+      form.remember = true
+    }
+  } catch { /* 无已存凭据 */ }
+})
+
+// 取消勾选即清除已存凭据（问题 6c）。
+async function onRememberChange() {
+  if (!form.remember) {
+    await goApp().ClearSavedCredentials()
+  }
+}
+
 function validate(): boolean {
   invalid.email = !emailRe.test(form.email.trim())
   invalid.password = form.password.length < 8
@@ -30,6 +52,12 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(form.email.trim(), form.password)
+    // 登录成功：勾选→保存/更新凭据；未勾选→确保清除。
+    if (form.remember) {
+      await goApp().SetSavedCredentials(form.email.trim(), form.password)
+    } else {
+      await goApp().ClearSavedCredentials()
+    }
     toast.value?.show('登录成功')
     router.push('/')
   } catch (e) {
@@ -76,8 +104,8 @@ async function submit() {
 
       <div class="opt-row">
         <label class="check">
-          <input v-model="form.remember" type="checkbox">
-          <span class="box"><Check :size="11" /></span>记住我
+          <input v-model="form.remember" type="checkbox" @change="onRememberChange">
+          <span class="box"><Check :size="11" /></span>记住密码
         </label>
         <button type="button" class="link" @click="router.push('/forgot')">忘记密码？</button>
       </div>

@@ -13,9 +13,10 @@ import (
 
 // Callbacks 托盘菜单回调（由 app 层注入）。
 type Callbacks struct {
-	OnShow       func()     // 显示主界面
+	OnReady      func()      // 图标与菜单就绪（app 置 trayReady，关闭链路兜底用）
+	OnShow       func()      // 显示主界面
 	OnToggleMute func() bool // 切换静音，返回切换后状态
-	OnQuit       func()     // 真正退出应用
+	OnQuit       func()      // 真正退出应用
 	IsMuted      func() bool // 查询当前静音态（构造勾选用）
 }
 
@@ -72,6 +73,11 @@ func onReady() {
 	cbMu.Unlock()
 	if cb.IsMuted != nil && cb.IsMuted() {
 		SetMuted(true)
+	}
+
+	// 图标+菜单都建好后才宣告托盘就绪（问题 4a/4c：就绪前关窗=真退出）。
+	if cb.OnReady != nil {
+		cb.OnReady()
 	}
 
 	for {

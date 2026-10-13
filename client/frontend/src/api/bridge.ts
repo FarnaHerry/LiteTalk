@@ -13,6 +13,13 @@ type GoApp = {
   WindowMinimize(): Promise<void>
   WindowMaximize(): Promise<void>
   WindowClose(): Promise<void>
+  QuitApp(): Promise<void>
+  TrayReady(): Promise<boolean>
+  GetCloseToTray(): Promise<boolean>
+  SetCloseToTray(v: boolean): Promise<void>
+  GetSavedCredentials(): Promise<SavedCredentials>
+  SetSavedCredentials(email: string, password: string): Promise<void>
+  ClearSavedCredentials(): Promise<void>
   SendEmailCode(email: string, purpose: string): Promise<void>
   Login(email: string, password: string): Promise<AuthResult>
   Register(nickname: string, email: string, password: string, code: string): Promise<AuthResult>
@@ -36,6 +43,12 @@ export interface AudioDeviceDTO {
   is_default: boolean
 }
 
+export interface SavedCredentials {
+  email: string
+  password: string
+  saved: boolean
+}
+
 declare global {
   interface Window {
     go?: { main?: { App?: GoApp } }
@@ -52,6 +65,13 @@ const mockApp: GoApp = {
   async GetAuthConfig() { return { auth_mode: 'full', mail_configured: false } },
   async GetHibernateOnMinimize() { return false },
   async SetHibernateOnMinimize() {},
+  async QuitApp() {},
+  async TrayReady() { return true },
+  async GetCloseToTray() { return true },
+  async SetCloseToTray() {},
+  async GetSavedCredentials() { return { email: '', password: '', saved: false } },
+  async SetSavedCredentials() {},
+  async ClearSavedCredentials() {},
   async GetServerConfig() {
     return { base_url: 'http://127.0.0.1:8077', ws_url: 'ws://127.0.0.1:8077/ws', source: 'default' as const }
   },

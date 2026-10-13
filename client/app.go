@@ -32,8 +32,12 @@ type App struct {
 	// hibernateOnMinimize 设置项「最小化时休眠界面（省内存）」，默认关闭。
 	hibernateOnMinimize bool
 
-	// forceQuit 托盘「退出」置位后 OnBeforeClose 放行真正关闭。
+	// forceQuit 托盘「退出」或「退出程序」置位后 OnBeforeClose 放行真正关闭。
 	forceQuit atomic.Bool
+
+	// trayReady 托盘图标+菜单就绪标志（tray onReady 置位）。
+	// 托盘不可用时关窗必须放行真正关闭，绝不能隐藏窗口把用户锁死（问题 4a）。
+	trayReady atomic.Bool
 
 	api  *state.APIClient
 	sess *state.Session // 登录并连接信令后创建
@@ -70,6 +74,10 @@ func (a *App) startup(ctx context.Context) {
 
 	// 托盘独占 goroutine（systray.Run 需要自己的消息循环）。
 	go tray.Run(tray.Callbacks{
+		OnReady: func() {
+			// 图标与菜单建好才视为托盘可用（问题 4a/4c）。
+			a.trayReady.Store(true)
+		},
 		OnShow: func() {
 			runtime.WindowShow(a.ctx)
 			runtime.WindowUnminimise(a.ctx)
@@ -106,15 +114,67 @@ func (a *App) emitHibernate() {
 	}
 }
 
-// onBeforeClose 拦截窗口关闭：隐藏到托盘而非退出。
-// 托盘「退出」置位 forceQuit 后放行真正关闭。
+// onBeforeClose 拦截窗口关闭：默认隐藏到托盘而非退出（问题 4 兜底链）。
+//   - forceQuit（托盘「退出」/设置页「退出程序」）→ 放行真正关闭
+//   - 托盘未就绪（图标不可用）→ 放行真正关闭，绝不隐藏窗口把用户锁死
+//   - 用户选「关闭窗口时=退出程序」→ 放行真正关闭
+//   - 其余 → 隐藏到托盘
 func (a *App) onBeforeClose(ctx context.Context) bool {
 	if a.forceQuit.Load() {
 		return false // 真正退出
 	}
+	if !a.trayReady.Load() {
+		// 托盘不可用：隐藏=无任何恢复路径，直接退出。
+		return false
+	}
+	if !a.cfg.CloseToTray() {
+		return false // 用户设置：关闭即退出
+	}
 	runtime.WindowHide(ctx)
 	a.emitHibernate()
 	return true
+}
+
+// QuitApp 显式退出程序（设置页「退出程序」按钮，不依赖托盘）。
+func (a *App) QuitApp() {
+	a.forceQuit.Store(true)
+	runtime.Quit(a.ctx)
+}
+
+// TrayReady 返回托盘是否就绪（前端可在关闭前预判行为）。
+func (a *App) TrayReady() bool { return a.trayReady.Load() }
+
+// GetCloseToTray 读取「关闭窗口时」设置（true=最小化到托盘，false=退出程序）。
+func (a *App) GetCloseToTray() bool { return a.cfg.CloseToTray() }
+
+// SetCloseToTray 持久化「关闭窗口时」设置。
+func (a *App) SetCloseToTray(v bool) {
+	_ = a.cfg.SetCloseToTray(v)
+}
+
+// ---------- 记住密码（问题 6） ----------
+
+// SavedCredentialsView 前端可见的凭据视图（Password 仅已记住时非空）。
+type SavedCredentialsView struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Saved    bool   `json:"saved"`
+}
+
+// GetSavedCredentials 读取记住的登录凭据（密码经 DPAPI 解密）。
+func (a *App) GetSavedCredentials() SavedCredentialsView {
+	c := a.cfg.GetSavedCredentials()
+	return SavedCredentialsView{Email: c.Email, Password: c.Password, Saved: c.Saved}
+}
+
+// SetSavedCredentials 保存登录凭据（邮箱明文 + 密码 DPAPI 加密）。
+func (a *App) SetSavedCredentials(email, password string) {
+	_ = a.cfg.SetSavedCredentials(email, password)
+}
+
+// ClearSavedCredentials 清除记住的凭据。
+func (a *App) ClearSavedCredentials() {
+	_ = a.cfg.ClearSavedCredentials()
 }
 
 // ---------- 窗口控制（自定义标题栏调用） ----------
