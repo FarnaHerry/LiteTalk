@@ -1,0 +1,28 @@
+# 轻音 LiteTalk — systemd 服务
+# 部署位置：/etc/systemd/system/litetalk.service
+# 前置：已按 env/litetalk.env.example 准备好 /etc/litetalk.env（权限 600）
+[Unit]
+Description=LiteTalk Server (signaling + SFU + REST)
+After=network.target mysqld.service redis.service
+
+[Service]
+Type=simple
+User=litetalk
+Group=litetalk
+WorkingDirectory=/opt/litetalk/server
+EnvironmentFile=/etc/litetalk.env
+ExecStart=/opt/litetalk/server/litetalk-server
+Restart=always
+RestartSec=3
+
+# 日志走 journald：journalctl -u litetalk -f
+StandardOutput=journal
+StandardError=journal
+
+# 基本加固
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

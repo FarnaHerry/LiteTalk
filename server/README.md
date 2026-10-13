@@ -1,7 +1,7 @@
 # LiteTalk Server
 
 轻音 LiteTalk 服务端：WS 信令 hub + 自研 Pion SFU + TURN 短期凭证签发 + 账号/社交 REST。
-自托管部署看本页即可；协议细节见仓库内 `client/README.md` 与源码注释。
+自托管部署看本页即可；**生产上线步骤与配置文件见 [deploy/README.md](deploy/README.md)**（Nginx/coturn/systemd/env 可直接复制）。协议细节见仓库内 `client/README.md` 与源码注释。
 
 ## 本地启动
 

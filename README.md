@@ -1,47 +1,76 @@
 # 轻音 LiteTalk
 
-桌面语音联机应用。客户端为 Go + Wails v2 + Vue 3，服务端为 Go 单体（REST API + WebSocket 信令 + 自研 Pion SFU）。完整设计文档仅保存在团队本地工作区，不入库。
+轻量的桌面语音联机应用：进频道即聊，服务端只做 SFU 转发，不混音不转码，自托管一台 2 核 2G 小服务器就够。
 
-## 目录结构
+## 特性
 
-- `client/` Wails 桌面客户端（`frontend/` 为 Vue 3 + Vite + TS 前端，`build/nfpm.yaml` 为 Linux 打包配置）
-- `server/` Go 服务端单体（部署配置、SQL 迁移等后续置于 `server/deploy/`、`server/migrations/`）
+- **多人语音**：频道内最多 10 人同聊（可配置），WebRTC/SRTP 加密传输，Opus 编解码
+- **降噪**：客户端 RNNoise 降噪 + 语音检测，说话才发包
+- **跨平台**：Windows / Linux 桌面端（macOS 产物为实验性，非阻塞发布）
+- **自托管**：单二进制服务端 + MySQL/Redis/coturn，一份部署手册照抄即可
+- **开源可复用**：Auth 支持 full/simple 双模式；验证码邮件可对接任意自有发码平台（Webhook 契约）或 SMTP
 
-## 本地开发
+## 界面
 
-前置：Go 1.27+、Node 22+、pnpm 9。国内开发先配置镜像：
+三栏布局：服务器/频道栏 · 语音房间（声波球卡片）· 好友列表。支持静音/耳聋/独立音量、
+文字频道聊天、系统托盘后台挂机、最小化休眠省内存。
 
-```bash
-go env -w GOPROXY=https://goproxy.cn,direct
-# 前端镜像已内置在项目级 client/frontend/.npmrc（npmmirror），无需全局配置
 ```
+┌────────┬──────────────┬───────────────────────────┬────────────┐
+│ 服务器 │ 频道树        │ 语音房间（成员声波球卡片）  │ 好友列表   │
+│  轨道  │ 文字/语音频道 │ 文字聊天 / 语音房间 切换    │ 在线状态   │
+│        │ 用户面板     │ 浮动通话卡片（时长/挂断）   │ 搜索       │
+└────────┴──────────────┴───────────────────────────┴────────────┘
+```
+
+## 快速开始
+
+### 桌面客户端
+
+到 [Releases](https://github.com/OpenALC/LiteTalk/releases) 下载：
+
+| 平台 | 产物 |
+|---|---|
+| Windows | `LiteTalk-windows-amd64-setup.exe`（安装器）/ `LiteTalk-windows-amd64-portable.zip`（免安装） |
+| Linux amd64 | `litetalk_<版本>_amd64.deb` / `litetalk_<版本>_amd64.rpm` / `LiteTalk-linux-amd64-portable.tar.gz` |
+| Linux arm64 | 同上（arm64） |
+| macOS | `LiteTalk-macos-arm64.zip`（实验性） |
+
+登录界面支持注册 / 找回密码；私域部署可开 simple 模式免验证码（见下）。
 
 ### 服务端
 
+见 **[server/deploy/README.md](server/deploy/README.md)**：端口、MySQL/Redis/coturn/Nginx/systemd
+全套配置文件与验证清单，RockyLinux 9.5 按步骤照抄即可。
+
+## 配置速查
+
+| 项 | 方式 |
+|---|---|
+| Auth 模式 | `LITETALK_AUTH_MODE=full`（验证码流程，公网推荐）/ `simple`（免验证码，仅私域） |
+| 验证码邮件 | 三选一：**Webhook**（`LITETALK_MAILER_WEBHOOK`，对接自有发码平台，契约见 [server/README.md](server/README.md)）/ **SMTP**（`LITETALK_SMTP_*`）/ **Console**（默认，打印到日志） |
+| 全部环境变量 | [server/deploy/env/litetalk.env.example](server/deploy/env/litetalk.env.example) |
+
+## 开发
+
+前置：Go 1.27+、Node 22+、pnpm。仓库结构：
+
+- `client/` Wails v2 桌面客户端（`frontend/` 为 Vue 3 + TS 前端）
+- `server/` Go 服务端（REST + WS 信令 + 自研 Pion SFU）
+
 ```bash
-cd server
-go run ./cmd/server   # 监听 :8077，可用环境变量 LITETALK_ADDR 覆盖
-go test ./...
+# 服务端
+cd server && go run ./cmd/server
+
+# 客户端（需 wails CLI：go install github.com/wailsapp/wails/v2/cmd/wails@latest）
+cd client/frontend && pnpm install
+cd .. && wails dev
 ```
 
-健康检查：`GET http://localhost:8077/api/v1/healthz`
+国内开发建议先配镜像：`go env -w GOPROXY=https://goproxy.cn,direct`（前端镜像已内置）。
 
-### 客户端
+CI：push 触发 vet/test/build 检查；推送 `v*` 标签自动全平台打包并发布 GitHub Release。
 
-需要安装 wails CLI（`go install github.com/wailsapp/wails/v2/cmd/wails@latest`）：
+## License
 
-```bash
-cd client/frontend && pnpm install   # 首次
-cd client
-wails dev                            # 开发模式（前端热更新）
-wails build                          # 出包到 client/build/bin/
-```
-
-不装 wails CLI 也可以只验证编译：先 `cd client/frontend && pnpm install && pnpm run build`（`go:embed` 依赖 dist 产物），再 `cd client && go vet ./... && go test ./... && go build ./...`。
-
-## CI/CD
-
-`.github/workflows/ci.yml` 为单共享工作流：
-
-- push 任意分支或 `workflow_dispatch`：服务端/客户端 vet + test + build 检查，不打包
-- 推送 `v*` 标签：在检查之上追加全平台打包（Windows 安装器/绿色版、Linux deb/rpm/tar.gz、macOS zip[非阻塞]、服务端 tar.gz），并汇总发布 GitHub Release
+[MIT](LICENSE)
