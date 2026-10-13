@@ -1,0 +1,94 @@
+package audio
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/gen2brain/malgo"
+)
+
+// DeviceInfo 是供上层使用的设备描述（ID 为 malgo 原始 ID 的十六进制形式）。
+type DeviceInfo struct {
+	ID        string
+	Name      string
+	IsDefault bool
+}
+
+// Context 包装 malgo 上下文；进程内建议只创建一个。
+type Context struct {
+	ctx *malgo.AllocatedContext
+}
+
+// NewContext 初始化音频后端上下文（Windows 上为 WASAPI）。
+// logf 为 nil 时静默；否则接收 miniaudio 日志。
+func NewContext(logf func(string)) (*Context, error) {
+	if logf == nil {
+		logf = func(string) {}
+	}
+	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, logf)
+	if err != nil {
+		return nil, fmt.Errorf("init audio context: %w", err)
+	}
+	return &Context{ctx: ctx}, nil
+}
+
+// Close 释放上下文。调用前必须先停掉所有由它创建的设备。
+func (c *Context) Close() error {
+	if c.ctx == nil {
+		return nil
+	}
+	err := c.ctx.Uninit()
+	c.ctx.Free()
+	c.ctx = nil
+	return err
+}
+
+// Devices 枚举采集（malgo.Capture）或播放（malgo.Playback）设备。
+func (c *Context) Devices(kind malgo.DeviceType) ([]DeviceInfo, error) {
+	infos, err := c.ctx.Devices(kind)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate devices: %w", err)
+	}
+	out := make([]DeviceInfo, len(infos))
+	for i := range infos {
+		out[i] = DeviceInfo{
+			ID:        infos[i].ID.String(),
+			Name:      infos[i].Name(),
+			IsDefault: infos[i].IsDefault != 0,
+		}
+	}
+	return out, nil
+}
+
+// resolveDeviceID 把用户的选择器解析为 malgo 设备 ID 指针。
+// selector 为空 → nil（默认设备）；否则先精确匹配 ID 十六进制串，
+// 再大小写不敏感子串匹配设备名；都不中则报错并列出候选。
+func (c *Context) resolveDeviceID(kind malgo.DeviceType, selector string) (*malgo.DeviceID, error) {
+	if selector == "" {
+		return nil, nil
+	}
+	infos, err := c.ctx.Devices(kind)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate devices: %w", err)
+	}
+	kindName := "capture"
+	if kind == malgo.Playback {
+		kindName = "playback"
+	}
+	for i := range infos {
+		if infos[i].ID.String() == selector {
+			return &infos[i].ID, nil
+		}
+	}
+	lower := strings.ToLower(selector)
+	for i := range infos {
+		if strings.Contains(strings.ToLower(infos[i].Name()), lower) {
+			return &infos[i].ID, nil
+		}
+	}
+	names := make([]string, len(infos))
+	for i := range infos {
+		names[i] = infos[i].Name()
+	}
+	return nil, fmt.Errorf("no %s device matches %q (available: %s)", kindName, selector, strings.Join(names, "; "))
+}

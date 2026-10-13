@@ -1,0 +1,239 @@
+package audio
+
+import (
+	"testing"
+	"time"
+
+	"github.com/OpenALC/LiteTalk/client/internal/codec"
+)
+
+func newLoopbackPipeline(t *testing.T, mutate func(*PipelineConfig)) *Pipeline {
+	t.Helper()
+	if !codec.Supported() {
+		t.Skip("opus codec unsupported on this platform")
+	}
+	cfg := DefaultPipelineConfig()
+	cfg.Backend = BackendNull // 不 Start，仅同步注入，用不到后端
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	p, err := NewPipeline(cfg)
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	t.Cleanup(func() { p.Close() })
+	return p
+}
+
+// TestLoopbackChain 全链路算法验证（不依赖声卡）：
+// 合成正弦 → DSP（旁路，见 dsp_test 说明）→ Opus 编码 → 本地解码 → 播放环，
+// 信号必须存活、账目必须对上。
+func TestLoopbackChain(t *testing.T) {
+	p := newLoopbackPipeline(t, func(c *PipelineConfig) { c.DSP.Denoise = false })
+
+	const frames10ms = 200 // 2s 音频 = 100 个 Opus 包
+	in := make([]int16, FrameSize)
+	var phase float64
+	var rng uint32 = 0xABCD
+
+	// 边注入边排空播放环，收集全部解码输出。
+	decoded := make([]int16, 0, frames10ms*FrameSize)
+	chunk := make([]int16, OpusFrameSize)
+	var inRMSAcc float64
+
+	for f := 0; f < frames10ms; f++ {
+		sineNoiseFrame(in, &phase, 12000, 2000, &rng)
+		inRMSAcc += rmsInt16(in)
+		if err := p.ProcessPCM(in); err != nil {
+			t.Fatalf("ProcessPCM frame %d: %v", f, err)
+		}
+		for {
+			n := p.ReadPlayback(chunk)
+			if n == 0 {
+				break
+			}
+			decoded = append(decoded, chunk[:n]...)
+		}
+	}
+
+	st := p.Stats()
+	if st.FramesProcessed != frames10ms {
+		t.Errorf("FramesProcessed = %d, want %d", st.FramesProcessed, frames10ms)
+	}
+	if st.PacketsEncoded != frames10ms/2 {
+		t.Errorf("PacketsEncoded = %d, want %d", st.PacketsEncoded, frames10ms/2)
+	}
+	if st.PacketsDecoded != frames10ms/2 {
+		t.Errorf("PacketsDecoded = %d, want %d", st.PacketsDecoded, frames10ms/2)
+	}
+	if st.EncodeErrors != 0 || st.DecodeErrors != 0 {
+		t.Errorf("codec errors: enc=%d dec=%d", st.EncodeErrors, st.DecodeErrors)
+	}
+	if st.PlaybackDropped != 0 {
+		t.Errorf("PlaybackDropped = %d, want 0", st.PlaybackDropped)
+	}
+	if st.AvgPacketBytes <= 0 || st.AvgPacketBytes > 1000 {
+		t.Errorf("AvgPacketBytes = %.1f, out of sane range", st.AvgPacketBytes)
+	}
+
+	// 解码输出长度 = 输入长度，能量保留（Opus+RNNoise 处理后允许衰减）。
+	if len(decoded) != frames10ms*FrameSize {
+		t.Fatalf("decoded %d samples, want %d", len(decoded), frames10ms*FrameSize)
+	}
+	inRMS := inRMSAcc / frames10ms
+	outRMS := rmsInt16(decoded)
+	t.Logf("chain: in RMS %.0f -> decoded RMS %.0f, avg packet %.1f bytes",
+		inRMS, outRMS, st.AvgPacketBytes)
+	if outRMS < inRMS*0.3 {
+		t.Errorf("decoded signal too weak: %.0f < 30%% of %.0f", outRMS, inRMS)
+	}
+	if st.LatencyCount == 0 {
+		t.Error("latency hook never recorded")
+	}
+	t.Logf("latency estimate: avg %dµs max %dµs", st.LatencyAvgUS, st.LatencyMaxUS)
+}
+
+// TestPipelineSpeaking 管线级说话状态回调（旁路模式，RMS 门限）：
+// 响亮信号段翻转 ON，静音段翻转 OFF。
+func TestPipelineSpeaking(t *testing.T) {
+	var states []bool
+	p := newLoopbackPipeline(t, func(c *PipelineConfig) {
+		c.DSP.Denoise = false
+		c.DSP.OnSpeakingChange = func(b bool) { states = append(states, b) }
+	})
+
+	in := make([]int16, FrameSize)
+	var phase float64
+	var rng uint32 = 0x55AA
+
+	for f := 0; f < 100; f++ { // 1s 语音
+		sineNoiseFrame(in, &phase, 12000, 2000, &rng)
+		if err := p.ProcessPCM(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !p.Speaking() {
+		t.Fatal("not speaking after 1s of loud signal")
+	}
+	for f := 0; f < 300; f++ { // 3s 静音
+		for i := range in {
+			in[i] = 0
+		}
+		if err := p.ProcessPCM(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.Speaking() {
+		t.Fatal("still speaking after 3s of silence")
+	}
+	if len(states) < 2 {
+		t.Fatalf("speaking transitions = %v, want at least [true false]", states)
+	}
+	if states[0] != true || states[len(states)-1] != false {
+		t.Fatalf("unexpected transition sequence: %v", states)
+	}
+	if st := p.Stats(); st.SpeakingChanges < 2 {
+		t.Fatalf("SpeakingChanges = %d, want >= 2", st.SpeakingChanges)
+	}
+}
+
+// TestPacketHook 非回环模式：OnPacket 收到全部包，且可用独立解码器解码（M2 出口验证）。
+func TestPacketHook(t *testing.T) {
+	var packets [][]byte
+	p := newLoopbackPipeline(t, func(c *PipelineConfig) {
+		c.Loopback = false
+		c.OnPacket = func(pkt []byte) {
+			packets = append(packets, append([]byte(nil), pkt...))
+		}
+	})
+
+	const frames10ms = 40 // 20 个包
+	in := make([]int16, FrameSize)
+	var phase float64
+	var rng uint32 = 0x99
+	for f := 0; f < frames10ms; f++ {
+		sineNoiseFrame(in, &phase, 12000, 2000, &rng)
+		if err := p.ProcessPCM(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(packets) != frames10ms/2 {
+		t.Fatalf("OnPacket got %d packets, want %d", len(packets), frames10ms/2)
+	}
+	for i, pkt := range packets {
+		if len(pkt) == 0 || len(pkt) > 4000 {
+			t.Fatalf("packet %d length %d out of range", i, len(pkt))
+		}
+	}
+
+	// 模拟对端：独立解码器逐包解码，长度必须还原为 960。
+	dec, err := codec.NewDecoder(SampleRate, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	out := make([]int16, OpusFrameSize)
+	for i, pkt := range packets {
+		m, err := dec.Decode(pkt, out, false)
+		if err != nil {
+			t.Fatalf("peer decode packet %d: %v", i, err)
+		}
+		if m != OpusFrameSize {
+			t.Fatalf("peer decode packet %d: %d samples, want %d", i, m, OpusFrameSize)
+		}
+	}
+	if st := p.Stats(); st.PacketsDecoded != 0 {
+		t.Fatalf("non-loopback PacketsDecoded = %d, want 0", st.PacketsDecoded)
+	}
+}
+
+// TestProcessPCMBadLength 非 480 整数倍的注入必须报错。
+func TestProcessPCMBadLength(t *testing.T) {
+	p := newLoopbackPipeline(t, nil)
+	if err := p.ProcessPCM(make([]int16, 500)); err == nil {
+		t.Fatal("ProcessPCM(500) should fail")
+	}
+	if err := p.ProcessPCM(nil); err != nil {
+		t.Fatalf("ProcessPCM(nil): %v", err)
+	}
+}
+
+// TestNullBackendRun 真实启动 null 后端跑 500ms，验证 Start/Stop 生命周期与账目。
+func TestNullBackendRun(t *testing.T) {
+	p := newLoopbackPipeline(t, func(c *PipelineConfig) { c.Backend = BackendNull })
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := p.Start(); err == nil {
+		t.Fatal("second Start should fail")
+	}
+	waitFor := func(cond func() bool, msg string) {
+		t.Helper()
+		deadline := 0
+		for !cond() {
+			if deadline++; deadline > 2000 { // ~2s
+				t.Fatalf("timeout waiting for: %s", msg)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	waitFor(func() bool { return p.Stats().PacketsEncoded >= 10 }, "10 encoded packets")
+	st := p.Stats()
+	p.Stop()
+
+	if st.FramesProcessed < 20 {
+		t.Errorf("FramesProcessed = %d, suspiciously low for 500ms run", st.FramesProcessed)
+	}
+	if st.PacketsEncoded == 0 || st.PacketsDecoded != st.PacketsEncoded {
+		t.Errorf("packets: encoded=%d decoded=%d", st.PacketsEncoded, st.PacketsDecoded)
+	}
+	if st.PlaybackSamples == 0 {
+		t.Error("null sink drained 0 samples")
+	}
+	if st.CaptureDropped != 0 || st.PlaybackUnderruns != 0 {
+		t.Errorf("drops: capture=%d underruns=%d", st.CaptureDropped, st.PlaybackUnderruns)
+	}
+	t.Logf("null backend 500ms: frames=%d pkts=%d played=%d samples, latency avg %dµs",
+		st.FramesProcessed, st.PacketsEncoded, st.PlaybackSamples, st.LatencyAvgUS)
+}

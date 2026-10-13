@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: ogg
+Description: library for manipulating ogg bitstreams - LiteTalk third_party
+Version: 1.3.6
+Libs: -L${libdir} -logg
+Libs.private:
+Cflags: -I${includedir}

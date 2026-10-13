@@ -2,7 +2,11 @@ module github.com/OpenALC/LiteTalk/client
 
 go 1.27
 
-require github.com/wailsapp/wails/v2 v2.16.0
+require (
+	github.com/VoiceBlender/rnnoise-go v0.3.0
+	github.com/gen2brain/malgo v0.11.26
+	github.com/wailsapp/wails/v2 v2.16.0
+)
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
