@@ -100,7 +100,10 @@ func main() {
 		}
 		log.Println("WS 鉴权: JWT")
 	}
-	hub := signal.NewHub(sfuInst, authenticator, log.Default(), 0)
+	hub := signal.NewHub(sfuInst, authenticator, log.Default(), 0, signal.ChatDeps{
+		Store:  st,
+		Limits: limits,
+	})
 
 	// TURN 短期凭证签发（coturn use-auth-secret，§5.4）
 	var rtcAuth rtcapi.UserFromToken

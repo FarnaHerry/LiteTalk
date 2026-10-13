@@ -17,10 +17,12 @@ import (
 // Hub WS 信令 hub：连接管理、房间登记与广播（docs/落地方案.md §5.3）。
 // 与 SFU 的桥接：channel.join 在 WS 层登记成员；PeerConnection 建立由 rtc.* 消息驱动。
 type Hub struct {
-	sfu    *sfu.SFU
-	auth   Authenticator
-	log    *log.Logger
-	maxPer int // 房间人数上限（与 SFU 一致）
+	sfu       *sfu.SFU
+	auth      Authenticator
+	log       *log.Logger
+	maxPer    int // 房间人数上限（与 SFU 一致）
+	chatStore ChatStore
+	limits    RateLimiter
 
 	mu    sync.Mutex
 	rooms map[string]*roomState
@@ -46,8 +48,14 @@ type client struct {
 	state  VoiceStateData
 }
 
+// ChatDeps 聊天持久化与频控依赖（可零值：仅广播不落库、不限流）。
+type ChatDeps struct {
+	Store  ChatStore
+	Limits RateLimiter
+}
+
 // NewHub 构造信令 hub。maxMembers <= 0 时取 SFU 的上限。
-func NewHub(s *sfu.SFU, auth Authenticator, logger *log.Logger, maxMembers int) *Hub {
+func NewHub(s *sfu.SFU, auth Authenticator, logger *log.Logger, maxMembers int, chat ChatDeps) *Hub {
 	if maxMembers <= 0 {
 		maxMembers = s.MaxMembers()
 	}
@@ -55,11 +63,13 @@ func NewHub(s *sfu.SFU, auth Authenticator, logger *log.Logger, maxMembers int) 
 		logger = log.Default()
 	}
 	return &Hub{
-		sfu:    s,
-		auth:   auth,
-		log:    logger,
-		maxPer: maxMembers,
-		rooms:  make(map[string]*roomState),
+		sfu:       s,
+		auth:      auth,
+		log:       logger,
+		maxPer:    maxMembers,
+		chatStore: chat.Store,
+		limits:    chat.Limits,
+		rooms:     make(map[string]*roomState),
 	}
 }
 
@@ -196,6 +206,13 @@ func (h *Hub) handleMessage(c *client, data []byte) {
 			return
 		}
 		h.handleVoiceState(c, d)
+	case TypeChatSend:
+		var d ChatSendData
+		if err := env.Decode(&d); err != nil {
+			h.sendError(c, ErrCodeBadMessage, "chat.send 数据格式错误")
+			return
+		}
+		h.handleChatSend(c, d)
 	default:
 		h.sendError(c, ErrCodeBadMessage, "未知消息类型: "+env.Type)
 	}

@@ -23,6 +23,8 @@ const (
 	TypeRTCAnswer       = "rtc.answer"
 	TypeRTCICE          = "rtc.ice"
 	TypeVoiceState      = "voice.state"
+	TypeChatSend        = "chat.send"    // C→S 文字消息发送
+	TypeChatMessage     = "chat.message" // S→C 文字消息广播
 	TypeError           = "error"
 )
 
@@ -34,6 +36,8 @@ const (
 	ErrCodeRoomFull      = "room_full"
 	ErrCodeRTC           = "rtc_error"
 	ErrCodeInternal      = "internal"
+	ErrCodeForbidden     = "forbidden"
+	ErrCodeRateLimited   = "rate_limited"
 )
 
 // Envelope 信令信封：{ "type": "...", "data": {...}, "ts": 1734500000000 }
@@ -130,6 +134,22 @@ type VoiceStateData struct {
 	Speaking *bool `json:"speaking,omitempty"`
 	Mute     *bool `json:"mute,omitempty"`
 	Deafen   *bool `json:"deafen,omitempty"`
+}
+
+// ChatSendData C→S chat.send：向频道发一条文字消息。
+type ChatSendData struct {
+	ChannelID string `json:"channel_id"`
+	Content   string `json:"content"`
+}
+
+// ChatMessageData S→C chat.message：文字消息广播。
+// 字段与客户端 client/internal/signal/protocol.go 的 ChatMessageData 逐一对齐。
+type ChatMessageData struct {
+	ID        string    `json:"id"`
+	ChannelID string    `json:"channel_id"`
+	Content   string    `json:"content"`
+	TS        int64     `json:"ts"`
+	User      UserBrief `json:"user"`
 }
 
 // VoiceStateBroadcast S→其他成员 的 voice.state 广播，服务端补充 user_id。
