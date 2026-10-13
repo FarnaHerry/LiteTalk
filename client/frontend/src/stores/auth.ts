@@ -1,11 +1,24 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { goApp } from '../api/bridge'
-import type { UserProfile } from '../api/types'
+import type { ServerConfig, UserProfile } from '../api/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserProfile | null>(null)
   const loggedIn = ref(false)
+
+  // 服务端能力开关（启动时拉取一次，注册/找回页据此适配 UI）。
+  const serverCfg = ref<ServerConfig>({ auth_mode: 'full', mail_configured: false })
+  const simpleMode = computed(() => serverCfg.value.auth_mode === 'simple')
+  const mailConfigured = computed(() => serverCfg.value.mail_configured)
+
+  async function loadConfig() {
+    try {
+      serverCfg.value = await goApp().GetAuthConfig()
+    } catch {
+      // 拉取失败保持 full 默认（验证码流程，向后兼容）。
+    }
+  }
 
   async function login(email: string, password: string) {
     const r = await goApp().Login(email, password)
@@ -38,5 +51,8 @@ export const useAuthStore = defineStore('auth', () => {
     loggedIn.value = true
   }
 
-  return { user, loggedIn, login, register, sendEmailCode, resetPassword, logout, fetchMe }
+  return {
+    user, loggedIn, serverCfg, simpleMode, mailConfigured,
+    loadConfig, login, register, sendEmailCode, resetPassword, logout, fetchMe,
+  }
 })

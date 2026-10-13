@@ -17,6 +17,7 @@ import (
 
 	"github.com/OpenALC/LiteTalk/server/internal/api"
 	"github.com/OpenALC/LiteTalk/server/internal/auth"
+	"github.com/OpenALC/LiteTalk/server/internal/mailer"
 	"github.com/OpenALC/LiteTalk/server/internal/rtcapi"
 	"github.com/OpenALC/LiteTalk/server/internal/sfu"
 	"github.com/OpenALC/LiteTalk/server/internal/signal"
@@ -132,14 +133,37 @@ func main() {
 		TTL:      12 * time.Hour,
 	}, rtcAuth, log.Default())
 
+	// 发信通道：webhook（自有发码平台）> SMTP > Console 打印，见 README「发信配置」
+	mail, mailName := mailer.New(mailer.Config{
+		WebhookURL:   os.Getenv("LITETALK_MAILER_WEBHOOK"),
+		WebhookToken: os.Getenv("LITETALK_MAILER_WEBHOOK_TOKEN"),
+		SMTPHost:     os.Getenv("LITETALK_SMTP_HOST"),
+		SMTPPort:     os.Getenv("LITETALK_SMTP_PORT"),
+		SMTPUser:     os.Getenv("LITETALK_SMTP_USER"),
+		SMTPPass:     os.Getenv("LITETALK_SMTP_PASS"),
+		SMTPFrom:     os.Getenv("LITETALK_SMTP_FROM"),
+	}, log.Default())
+	log.Printf("发信通道: %s", mailName)
+
+	// Auth 模式：full（默认，验证码流程）/ simple（免验证码，私域部署从简）
+	authMode := envOr("LITETALK_AUTH_MODE", "full")
+	if authMode != "full" && authMode != "simple" {
+		log.Fatalf("LITETALK_AUTH_MODE 只支持 full / simple，实际为 %q", authMode)
+	}
+	if authMode == "simple" {
+		log.Println("Auth 模式: simple（注册/找回免验证码，仅建议私域部署）")
+	}
+
 	// REST API（§5.4 全量）
 	apiSrv := api.New(api.Config{
-		Store:   st,
-		JWT:     jwtSigner,
-		Refresh: refreshStore,
-		Codes:   codes,
-		Limits:  limits,
-		Log:     log.Default(),
+		Store:    st,
+		JWT:      jwtSigner,
+		Refresh:  refreshStore,
+		Codes:    codes,
+		Limits:   limits,
+		Mailer:   mail,
+		AuthMode: authMode,
+		Log:      log.Default(),
 	})
 
 	mux := http.NewServeMux()

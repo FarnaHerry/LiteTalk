@@ -11,6 +11,7 @@ import './auth-forms.css'
 const router = useRouter()
 const auth = useAuthStore()
 const toast = ref<InstanceType<typeof Toast>>()
+auth.loadConfig()
 
 const form = reactive({ email: '', code: '', password: '' })
 const invalid = reactive({ email: false, code: false, password: false })
@@ -23,9 +24,17 @@ let cdTimer: ReturnType<typeof setInterval> | null = null
 
 function validate(): boolean {
   invalid.email = !emailRe.test(form.email.trim())
-  invalid.code = !/^\d{6}$/.test(form.code)
+  invalid.code = !auth.simpleMode && !/^\d{6}$/.test(form.code)
   invalid.password = form.password.length < 8
   return !(invalid.email || invalid.code || invalid.password)
+}
+
+function friendlyErr(e: unknown): string {
+  const s = String(e)
+  if (s.includes('too_frequent') || s.includes('发送过于频繁')) return '发送过于频繁，请稍后再试'
+  if (s.includes('daily_limit') || s.includes('上限')) return '今日发送次数已达上限'
+  if (s.includes('not_found') || s.includes('未注册')) return '邮箱未注册'
+  return auth.mailConfigured ? '操作失败，请稍后再试' : '发送失败：服务未配置发信通道'
 }
 
 async function sendCode() {
@@ -40,7 +49,7 @@ async function sendCode() {
       if (cd.value <= 0 && cdTimer) { clearInterval(cdTimer); cdTimer = null }
     }, 1000)
   } catch (e) {
-    toast.value?.show(String(e), true)
+    toast.value?.show(friendlyErr(e), true)
   }
 }
 
@@ -48,11 +57,11 @@ async function submit() {
   if (!validate()) return
   loading.value = true
   try {
-    await auth.resetPassword(form.email.trim(), form.code, form.password)
+    await auth.resetPassword(form.email.trim(), auth.simpleMode ? '' : form.code, form.password)
     toast.value?.show('密码已重置')
     router.push('/login')
   } catch (e) {
-    toast.value?.show(String(e), true)
+    toast.value?.show(friendlyErr(e), true)
   } finally {
     loading.value = false
   }
@@ -67,25 +76,25 @@ onUnmounted(() => { if (cdTimer) clearInterval(cdTimer) })
       <ArrowLeft :size="15" />返回登录
     </button>
     <h2 class="view-title">重置密码</h2>
-    <p class="view-sub">验证码将发送到你的注册邮箱</p>
+    <p class="view-sub">{{ auth.simpleMode ? '填写邮箱与新密码即可重置' : '验证码将发送到你的注册邮箱' }}</p>
 
     <form @submit.prevent="submit" novalidate>
       <div class="field" :class="{ invalid: invalid.email }">
         <label>邮箱</label>
-        <div class="code-row">
+        <div :class="auth.simpleMode ? 'input-wrap' : 'code-row'">
           <div class="input-wrap">
             <Mail :size="17" />
             <input v-model="form.email" type="email" placeholder="you@example.com"
                    @input="invalid.email = false">
           </div>
-          <button type="button" class="code-btn" :disabled="cd > 0" @click="sendCode">
+          <button v-if="!auth.simpleMode" type="button" class="code-btn" :disabled="cd > 0" @click="sendCode">
             {{ cd > 0 ? `${cd}s` : '发送验证码' }}
           </button>
         </div>
         <p class="field-err">请输入有效的邮箱地址</p>
       </div>
 
-      <div class="field" :class="{ invalid: invalid.code }">
+      <div v-if="!auth.simpleMode" class="field" :class="{ invalid: invalid.code }">
         <label>邮箱验证码</label>
         <div class="input-wrap">
           <ShieldCheck :size="17" />

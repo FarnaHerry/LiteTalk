@@ -1,7 +1,7 @@
-# LiteTalk Server（M2）
+# LiteTalk Server
 
-轻音 LiteTalk 服务端：WS 信令 hub + 自研 Pion SFU + TURN 短期凭证签发。
-协议契约见 `docs/落地方案.md` §5.2（SFU）/ §5.3（信令）/ §5.5（通话时序）。
+轻音 LiteTalk 服务端：WS 信令 hub + 自研 Pion SFU + TURN 短期凭证签发 + 账号/社交 REST。
+自托管部署看本页即可；协议细节见仓库内 `client/README.md` 与源码注释。
 
 ## 本地启动
 
@@ -20,8 +20,53 @@ LITETALK_ADDR=:18077 go run ./cmd/server   # 自定义端口
 | `LITETALK_TURN_SECRET` | （空） | coturn `static-auth-secret`；空则凭证接口返回 503 |
 | `LITETALK_TURN_URLS` | `turn:127.0.0.1:3478` | TURN URL，逗号分隔 |
 | `LITETALK_STUN_URLS` | `stun:127.0.0.1:3478` | STUN URL，逗号分隔 |
+| `LITETALK_AUTH_MODE` | `full` | `full`：注册/找回需邮箱验证码；`simple`：免验证码（见下） |
 
 健康检查：`curl http://127.0.0.1:8077/api/v1/healthz`
+
+## Auth 模式（full / simple）
+
+| 行为 | `full`（默认） | `simple` |
+|---|---|---|
+| 注册 | 需邮箱验证码 | 邮箱+密码直接注册 |
+| 找回密码 | 需邮箱验证码 | 邮箱+新密码直接重置 |
+| 发验证码接口 | 正常发信 | 返回 `verification_not_required` |
+
+**取舍提示**：`simple` 模式下任何知道你邮箱的人都能重置密码——只为私域部署
+（家里 NAS、公司内网）从简而设；公网部署请保持 `full` 并配置发信通道。
+客户端会自动读取 `GET /api/v1/config` 适配界面（simple 模式隐藏验证码输入）。
+
+## 发信配置（验证码邮件）
+
+验证码投递通道按以下优先级自动选择，启动日志会打一行当前所用通道：
+
+| 优先级 | 通道 | 环境变量 | 适用 |
+|---|---|---|---|
+| 1 | **Webhook**（自有发码平台） | `LITETALK_MAILER_WEBHOOK`<br>`LITETALK_MAILER_WEBHOOK_TOKEN`（可选） | 商业组织接自有短信/邮件平台 |
+| 2 | **SMTP**（标准邮箱） | `LITETALK_SMTP_HOST`<br>`LITETALK_SMTP_PORT`（默认 587，465 走隐式 TLS）<br>`LITETALK_SMTP_USER`<br>`LITETALK_SMTP_PASS`<br>`LITETALK_SMTP_FROM`（必填） | 任意邮箱，建议自有域名并配 SPF/DKIM |
+| 3 | **Console**（默认） | 无 | 开发调试：验证码打印到服务端日志 |
+
+SMTP 配置不全（缺 HOST 或 FROM）会自动降级 Console 并在启动日志提示。
+
+### Webhook 对接契约（自定义发码平台）
+
+服务端向 `LITETALK_MAILER_WEBHOOK` 发起 POST：
+
+```http
+POST <webhook_url> HTTP/1.1
+Content-Type: application/json
+Authorization: Bearer <LITETALK_MAILER_WEBHOOK_TOKEN>   # 配置了 token 才带
+
+{"email": "user@example.com", "code": "123456", "purpose": "register"}
+```
+
+- `purpose`：`register`（注册验证）| `reset`（密码重置）
+- 返回 **2xx** 即视为发送成功；其他状态码视为失败（服务端记日志，不向用户暴露）
+- 你的平台收到后自行完成短信/邮件/企业微信等任意投递，10 分钟内送达用户即可
+  （验证码有效期 10 分钟）
+- 实现参考：`server/internal/mailer/mailer.go` 的 `Webhook`（约 30 行），
+  如需其他协议（如阿里云邮件推送 SDK），实现 `mailer.Mailer` 接口并在
+  `mailer.New` 中注册即可
 
 ## wscat 拨测 join
 

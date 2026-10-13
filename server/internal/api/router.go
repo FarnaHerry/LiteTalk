@@ -15,6 +15,12 @@ import (
 	"github.com/OpenALC/LiteTalk/server/internal/store"
 )
 
+// AuthMode 鉴权模式：full（默认，验证码流程）/ simple（免验证码，适合私域部署）。
+const (
+	AuthModeFull   = "full"
+	AuthModeSimple = "simple"
+)
+
 // Server API 依赖集合。
 type Server struct {
 	store    store.Store
@@ -23,18 +29,20 @@ type Server struct {
 	codes    *auth.EmailCodes
 	limits   *auth.RateLimit
 	mailer   mailer.Mailer
+	authMode string
 	log      *log.Logger
 }
 
 // Config 构造配置。
 type Config struct {
-	Store   store.Store
-	JWT     *auth.JWT
-	Refresh *auth.RefreshStore
-	Codes   *auth.EmailCodes
-	Limits  *auth.RateLimit
-	Mailer  mailer.Mailer
-	Log     *log.Logger
+	Store    store.Store
+	JWT      *auth.JWT
+	Refresh  *auth.RefreshStore
+	Codes    *auth.EmailCodes
+	Limits   *auth.RateLimit
+	Mailer   mailer.Mailer
+	AuthMode string // 空视为 full
+	Log      *log.Logger
 }
 
 // New 构造 API Server。
@@ -47,20 +55,36 @@ func New(cfg Config) *Server {
 	if m == nil {
 		m = &mailer.Console{Log: lg}
 	}
-	return &Server{
-		store:   cfg.Store,
-		jwt:     cfg.JWT,
-		refresh: cfg.Refresh,
-		codes:   cfg.Codes,
-		limits:  cfg.Limits,
-		mailer:  m,
-		log:     lg,
+	mode := cfg.AuthMode
+	if mode != AuthModeSimple {
+		mode = AuthModeFull
 	}
+	return &Server{
+		store:    cfg.Store,
+		jwt:      cfg.JWT,
+		refresh:  cfg.Refresh,
+		codes:    cfg.Codes,
+		limits:   cfg.Limits,
+		mailer:   m,
+		authMode: mode,
+		log:      lg,
+	}
+}
+
+// simpleMode 当前是否为简捷模式（免验证码）。
+func (s *Server) simpleMode() bool { return s.authMode == AuthModeSimple }
+
+// mailConfigured 发信通道是否为真实投递（Console 打印不算）。
+func (s *Server) mailConfigured() bool {
+	_, isConsole := s.mailer.(*mailer.Console)
+	return !isConsole
 }
 
 // Handler 返回挂载全部路由的 http.Handler（前缀 /api/v1）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// config（免鉴权，客户端据此适配 UI）
+	mux.HandleFunc("GET /api/v1/config", s.handleConfig)
 	// auth
 	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)

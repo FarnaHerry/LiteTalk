@@ -11,6 +11,7 @@ import './auth-forms.css'
 const router = useRouter()
 const auth = useAuthStore()
 const toast = ref<InstanceType<typeof Toast>>()
+auth.loadConfig()
 
 const form = reactive({ nickname: '', email: '', code: '', password: '' })
 const invalid = reactive({ name: false, email: false, code: false, password: false })
@@ -34,9 +35,19 @@ const strengthClass = computed(() => {
 function validate(): boolean {
   invalid.name = form.nickname.trim().length < 2 || form.nickname.trim().length > 16
   invalid.email = !emailRe.test(form.email.trim())
-  invalid.code = !/^\d{6}$/.test(form.code)
+  invalid.code = !auth.simpleMode && !/^\d{6}$/.test(form.code)
   invalid.password = form.password.length < 8
   return !(invalid.name || invalid.email || invalid.code || invalid.password)
+}
+
+// friendlyErr 发码/注册失败的友好提示（不暴露内部错误）。
+function friendlyErr(e: unknown): string {
+  const s = String(e)
+  if (s.includes('too_frequent') || s.includes('发送过于频繁')) return '发送过于频繁，请稍后再试'
+  if (s.includes('daily_limit') || s.includes('上限')) return '今日发送次数已达上限'
+  if (s.includes('email_taken') || s.includes('已注册')) return '邮箱已注册'
+  if (s.includes('bad_credentials') || s.includes('密码错误')) return '邮箱或密码错误'
+  return auth.mailConfigured ? '操作失败，请稍后再试' : '发送失败：服务未配置发信通道'
 }
 
 async function sendCode() {
@@ -51,7 +62,7 @@ async function sendCode() {
       if (cd.value <= 0 && cdTimer) { clearInterval(cdTimer); cdTimer = null }
     }, 1000)
   } catch (e) {
-    toast.value?.show(String(e), true)
+    toast.value?.show(friendlyErr(e), true)
   }
 }
 
@@ -59,11 +70,12 @@ async function submit() {
   if (!validate()) return
   loading.value = true
   try {
-    await auth.register(form.nickname.trim(), form.email.trim(), form.password, form.code)
+    await auth.register(form.nickname.trim(), form.email.trim(), form.password,
+      auth.simpleMode ? '' : form.code)
     toast.value?.show('注册成功')
     router.push('/')
   } catch (e) {
-    toast.value?.show(String(e), true)
+    toast.value?.show(friendlyErr(e), true)
   } finally {
     loading.value = false
   }
@@ -93,20 +105,20 @@ onUnmounted(() => { if (cdTimer) clearInterval(cdTimer) })
 
       <div class="field" :class="{ invalid: invalid.email }">
         <label>邮箱</label>
-        <div class="code-row">
+        <div :class="auth.simpleMode ? 'input-wrap' : 'code-row'">
           <div class="input-wrap">
             <Mail :size="17" />
             <input v-model="form.email" type="email" placeholder="you@example.com"
                    autocomplete="email" @input="invalid.email = false">
           </div>
-          <button type="button" class="code-btn" :disabled="cd > 0" @click="sendCode">
+          <button v-if="!auth.simpleMode" type="button" class="code-btn" :disabled="cd > 0" @click="sendCode">
             {{ cd > 0 ? `${cd}s` : '发送验证码' }}
           </button>
         </div>
         <p class="field-err">请输入有效的邮箱地址</p>
       </div>
 
-      <div class="field" :class="{ invalid: invalid.code }">
+      <div v-if="!auth.simpleMode" class="field" :class="{ invalid: invalid.code }">
         <label>邮箱验证码</label>
         <div class="input-wrap">
           <ShieldCheck :size="17" />

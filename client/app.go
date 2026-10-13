@@ -136,6 +136,11 @@ func (a *App) GetVersion() string { return version }
 
 // ---------- 认证（转发 REST，§5.4） ----------
 
+// GetAuthConfig 获取服务端 Auth 模式与发信配置（前端适配 UI 用）。
+func (a *App) GetAuthConfig() (*state.ServerConfig, error) {
+	return a.api.GetServerConfig()
+}
+
 // SendEmailCode 发送验证码（purpose: register / reset）。
 func (a *App) SendEmailCode(email, purpose string) error {
 	return a.api.SendEmailCode(email, purpose)

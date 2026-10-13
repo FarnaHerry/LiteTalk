@@ -12,6 +12,12 @@ export interface AuthResult {
   user: UserProfile
 }
 
+// ServerConfig 服务端能力开关（GET /api/v1/config）。
+export interface ServerConfig {
+  auth_mode: 'full' | 'simple'
+  mail_configured: boolean
+}
+
 export interface PeerView {
   user_id: string
   nickname: string

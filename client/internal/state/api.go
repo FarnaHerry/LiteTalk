@@ -113,6 +113,28 @@ func decodeError(status int, data []byte) error {
 	return fmt.Errorf("http %d: %s", status, string(data))
 }
 
+// ServerConfig 服务端能力开关（GET /api/v1/config，免鉴权）。
+type ServerConfig struct {
+	AuthMode      string `json:"auth_mode"`       // full | simple
+	MailConfigured bool  `json:"mail_configured"` // 发信是否为真实投递
+}
+
+// GetServerConfig 获取服务端 Auth 模式与发信配置（客户端适配 UI 用）。
+func (c *APIClient) GetServerConfig() (*ServerConfig, error) {
+	status, data, err := c.get("/config")
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, decodeError(status, data)
+	}
+	var cfg ServerConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
 // SendEmailCode 发验证码（purpose: register / reset，60s 间隔由服务端限流）。
 func (c *APIClient) SendEmailCode(email, purpose string) error {
 	status, data, err := c.post("/auth/email-code", map[string]string{

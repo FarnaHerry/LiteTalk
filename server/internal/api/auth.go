@@ -108,10 +108,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_password", "密码至少 8 位")
 		return
 	}
-	// 验证邮箱验证码。
-	if err := s.codes.Verify(r.Context(), auth.PurposeRegister, req.Email, req.Code); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_code", "验证码无效或已过期")
-		return
+	// 验证邮箱验证码（simple 模式免验证码）。
+	if !s.simpleMode() {
+		if err := s.codes.Verify(r.Context(), auth.PurposeRegister, req.Email, req.Code); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_code", "验证码无效或已过期")
+			return
+		}
 	}
 
 	hash, err := auth.HashPassword(req.Password)
@@ -124,11 +126,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var user *store.User
 	for i := 0; i < 5; i++ {
 		user = &store.User{
-			Email:         req.Email,
-			Nickname:      req.Nickname,
-			Tag:           fmtTag(int(time.Now().UnixNano()+int64(i*7919)) % 10000),
-			PasswordHash:  hash,
-			EmailVerified: true, // 邮箱已过验证码验证
+			Email:    req.Email,
+			Nickname: req.Nickname,
+			Tag:      fmtTag(int(time.Now().UnixNano()+int64(i*7919)) % 10000),
+			PasswordHash: hash,
+			// full 模式邮箱已过验证码验证；simple 模式未验证（从简取舍）。
+			EmailVerified: !s.simpleMode(),
 		}
 		err = s.store.CreateUser(r.Context(), user)
 		if errors.Is(err, store.ErrConflict) {
@@ -226,6 +229,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleEmailCode POST /api/v1/auth/email-code
 func (s *Server) handleEmailCode(w http.ResponseWriter, r *http.Request) {
+	if s.simpleMode() {
+		writeErr(w, http.StatusBadRequest, "verification_not_required", "当前服务未启用邮箱验证，无需验证码")
+		return
+	}
 	var req emailCodeReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -279,9 +286,13 @@ func (s *Server) handlePasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_password", "密码至少 8 位")
 		return
 	}
-	if err := s.codes.Verify(r.Context(), auth.PurposeReset, req.Email, req.Code); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_code", "验证码无效或已过期")
-		return
+	// 验证邮箱验证码（simple 模式免验证码：仅凭邮箱+新密码改密，
+	// 适合私域部署的从简取舍，公开部署请用 full 模式）。
+	if !s.simpleMode() {
+		if err := s.codes.Verify(r.Context(), auth.PurposeReset, req.Email, req.Code); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_code", "验证码无效或已过期")
+			return
+		}
 	}
 	user, err := s.store.UserByEmail(r.Context(), req.Email)
 	if err != nil {
