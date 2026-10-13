@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>轻音 LiteTalk · 登录</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234FA4F3' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M2 13a2 2 0 0 0 2-2V7a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0V4a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0v-4a2 2 0 0 1 2-2'/%3E%3C/svg%3E">
+<style>
+:root{
+  --brand-50:#EFF5FA; --brand-200:#C8E3F5; --brand-500:#4FA4F3;
+  --brand-600:#3E96EC; --brand-700:#2E7FD1;
+  --ink-900:#17324B; --ink-600:#3D5A76; --ink-400:#7E97AE; --ink-300:#A9BCCF;
+  --surface:#FFFFFF; --line:#DCE9F6;
+  --green:#3FB57F; --red:#E85B5B;
+  --ease:cubic-bezier(0.22,1,0.36,1);
+  --shadow-1:0 2px 8px rgba(23,50,75,.05);
+  --shadow-2:0 8px 24px rgba(23,50,75,.08);
+  --shadow-3:0 16px 48px rgba(23,50,75,.12);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:"MiSans","HarmonyOS Sans SC","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  background:var(--brand-50);
+  color:var(--ink-900);
+  font-size:14px;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none}
+input{font-family:inherit}
+
+/* ---------- 背景装饰 ---------- */
+.bg-decor{position:fixed;inset:0;pointer-events:none;z-index:0}
+.bg-decor::before,.bg-decor::after{content:"";position:absolute;border-radius:50%}
+.bg-decor::before{width:640px;height:640px;left:-200px;top:-240px;
+  background:radial-gradient(circle,rgba(200,227,245,.55),transparent 65%)}
+.bg-decor::after{width:560px;height:560px;right:-180px;bottom:-220px;
+  background:radial-gradient(circle,rgba(200,227,245,.45),transparent 65%)}
+
+/* ---------- 布局 ---------- */
+.stage{position:relative;z-index:1;height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+.shell{width:960px;max-width:100%;height:600px;max-height:100%;
+  display:grid;grid-template-columns:1fr 460px;
+  background:var(--surface);border:1px solid var(--line);border-radius:24px;
+  box-shadow:var(--shadow-3);overflow:hidden}
+
+/* ---------- 品牌区 ---------- */
+.brand{position:relative;padding:56px 48px;display:flex;flex-direction:column;
+  background:linear-gradient(160deg,var(--brand-50),#FFFFFF 70%)}
+.brand-top{display:flex;align-items:center;gap:14px}
+.logo-mark{width:48px;height:48px;border-radius:14px;background:var(--brand-500);
+  display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(79,164,243,.35)}
+.logo-mark svg{width:26px;height:26px;color:#fff;stroke-width:2.4}
+.brand-name{font-size:20px;font-weight:700;letter-spacing:.5px}
+.brand-name small{display:block;font-size:11px;font-weight:500;color:var(--ink-400);letter-spacing:2.5px;margin-top:2px}
+.brand-mid{flex:1;display:flex;flex-direction:column;justify-content:center;gap:28px}
+.brand-tag{font-size:15px;color:var(--ink-600);line-height:1.8;text-wrap:pretty}
+/* 声波装饰 */
+.waves{display:flex;align-items:center;gap:10px;height:64px}
+.waves span{width:5px;border-radius:3px;background:var(--brand-200);
+  animation:wave 2.4s var(--ease) infinite;animation-delay:calc(var(--i)*.14s)}
+.waves span:nth-child(3n){background:var(--brand-500)}
+.waves span:nth-child(1){height:22px}.waves span:nth-child(2){height:38px}
+.waves span:nth-child(3){height:56px}.waves span:nth-child(4){height:34px}
+.waves span:nth-child(5){height:48px}.waves span:nth-child(6){height:26px}
+.waves span:nth-child(7){height:40px}.waves span:nth-child(8){height:18px}
+@keyframes wave{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+.brand-foot{font-size:12px;color:var(--ink-300)}
+
+/* ---------- 表单区 ---------- */
+.panel{padding:44px 48px;display:flex;flex-direction:column;background:var(--surface);position:relative}
+.views{position:relative;flex:1}
+.view{position:absolute;inset:0;display:flex;flex-direction:column;
+  opacity:0;transform:translateY(10px);pointer-events:none;
+  transition:opacity .3s var(--ease),transform .3s var(--ease)}
+.view.active{opacity:1;transform:none;pointer-events:auto}
+
+/* 分段切换 */
+.seg{display:grid;grid-template-columns:1fr 1fr;position:relative;
+  background:var(--brand-50);border-radius:12px;padding:4px;margin-bottom:28px}
+.seg button{height:38px;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-400);
+  position:relative;z-index:1;transition:color .25s var(--ease)}
+.seg button.on{color:var(--ink-900)}
+.seg-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);
+  background:var(--surface);border-radius:9px;box-shadow:var(--shadow-1);
+  transition:transform .3s var(--ease)}
+.seg.reg .seg-thumb{transform:translateX(100%)}
+
+.view-title{font-size:20px;font-weight:700;margin-bottom:6px}
+.view-sub{font-size:13px;color:var(--ink-400);margin-bottom:26px}
+
+.field{margin-bottom:16px}
+.field label{display:block;font-size:13px;font-weight:600;color:var(--ink-600);margin-bottom:7px}
+.input-wrap{position:relative;display:flex;align-items:center}
+.input-wrap>svg{position:absolute;left:13px;width:17px;height:17px;color:var(--ink-300);pointer-events:none;transition:color .2s}
+.input-wrap input{width:100%;height:44px;padding:0 42px 0 40px;font-size:14px;color:var(--ink-900);
+  background:var(--surface);border:1.5px solid var(--brand-200);border-radius:10px;outline:none;
+  transition:border-color .2s var(--ease),box-shadow .2s var(--ease)}
+.input-wrap input::placeholder{color:var(--ink-300)}
+.input-wrap input:focus{border-color:var(--brand-500);box-shadow:0 0 0 3px rgba(79,164,243,.15)}
+.input-wrap:focus-within>svg{color:var(--brand-500)}
+.eye{position:absolute;right:6px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+  border-radius:8px;color:var(--ink-300);transition:color .2s,background .2s}
+.eye:hover{color:var(--ink-600);background:var(--brand-50)}
+.eye svg{width:16px;height:16px}
+.field.invalid input{border-color:var(--red);box-shadow:0 0 0 3px rgba(232,91,91,.12)}
+.field-err{display:none;font-size:12px;color:var(--red);margin-top:6px}
+.field.invalid .field-err{display:block}
+.field.invalid .input-wrap{animation:shake .4s var(--ease)}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}50%{transform:translateX(5px)}75%{transform:translateX(-3px)}}
+
+/* 验证码行 */
+.code-row{display:flex;gap:10px}
+.code-row .input-wrap{flex:1}
+.code-btn{flex:none;height:44px;padding:0 16px;border-radius:10px;font-size:13px;font-weight:600;
+  color:var(--brand-600);background:rgba(79,164,243,.1);transition:background .2s,color .2s}
+.code-btn:hover:not(:disabled){background:rgba(79,164,243,.18)}
+.code-btn:disabled{color:var(--ink-300);cursor:not-allowed}
+
+/* 密码强度 */
+.strength{display:flex;gap:6px;margin-top:8px}
+.strength i{flex:1;height:4px;border-radius:2px;background:var(--brand-200);transition:background .3s}
+.strength.s1 i:nth-child(1){background:var(--red)}
+.strength.s2 i:nth-child(-n+2){background:#F0A54C}
+.strength.s3 i{background:var(--green)}
+
+/* 选项行 */
+.opt-row{display:flex;align-items:center;justify-content:space-between;margin:2px 0 22px}
+.check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-600);cursor:pointer;user-select:none}
+.check input{display:none}
+.check .box{width:17px;height:17px;border-radius:5px;border:1.5px solid var(--brand-200);
+  display:flex;align-items:center;justify-content:center;transition:all .2s var(--ease);background:var(--surface)}
+.check .box svg{width:11px;height:11px;color:#fff;opacity:0;transform:scale(.5);transition:all .2s var(--ease)}
+.check input:checked+.box{background:var(--brand-500);border-color:var(--brand-500)}
+.check input:checked+.box svg{opacity:1;transform:scale(1)}
+.link{font-size:13px;font-weight:600;color:var(--brand-600);transition:color .2s}
+.link:hover{color:var(--brand-700)}
+
+/* 主按钮 */
+.btn-primary{width:100%;height:44px;border-radius:10px;background:var(--brand-500);color:#fff;
+  font-size:15px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:background .2s var(--ease),transform .15s var(--ease),box-shadow .2s;
+  box-shadow:0 4px 12px rgba(79,164,243,.3)}
+.btn-primary:hover:not(:disabled){background:var(--brand-600);box-shadow:0 6px 18px rgba(79,164,243,.4)}
+.btn-primary:active:not(:disabled){transform:scale(.98)}
+.btn-primary:disabled{opacity:.7;cursor:not-allowed}
+.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;
+  border-radius:50%;animation:spin .7s linear infinite;display:none}
+.btn-primary.loading .spinner{display:block}
+.btn-primary.loading .btn-text{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.view-foot{margin-top:auto;padding-top:18px;text-align:center;font-size:13px;color:var(--ink-400)}
+
+/* 返回 */
+.back-link{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
+  color:var(--ink-400);margin-bottom:22px;transition:color .2s;width:fit-content}
+.back-link:hover{color:var(--ink-900)}
+.back-link svg{width:15px;height:15px}
+
+/* Toast */
+.toast{position:fixed;top:28px;left:50%;transform:translate(-50%,-16px);z-index:50;
+  display:flex;align-items:center;gap:8px;padding:11px 18px;border-radius:12px;
+  background:var(--ink-900);color:#fff;font-size:13px;font-weight:500;
+  box-shadow:var(--shadow-2);opacity:0;pointer-events:none;
+  transition:opacity .3s var(--ease),transform .3s var(--ease)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast svg{width:16px;height:16px;color:var(--green)}
+.toast.err svg{color:var(--red)}
+
+@media (max-width:880px){
+  body{overflow:auto}
+  .stage{padding:0;align-items:stretch}
+  .shell{grid-template-columns:1fr;height:100vh;border:none;border-radius:0}
+  .brand{padding:20px 24px;flex-direction:row;align-items:center;gap:12px}
+  .brand-mid,.brand-foot{display:none}
+  .brand-top{gap:10px}
+  .logo-mark{width:36px;height:36px;border-radius:10px}
+  .brand-name{font-size:16px}
+  .panel{padding:28px 24px;overflow:auto}
+  .view{position:static;display:none}
+  .view.active{display:flex}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="bg-decor"></div>
+
+<div class="stage">
+  <div class="shell">
+
+    <!-- 品牌区 -->
+    <aside class="brand">
+      <div class="brand-top">
+        <div class="logo-mark"><i data-lucide="audio-waveform"></i></div>
+        <div class="brand-name">轻音<small>LITETALK</small></div>
+      </div>
+      <div class="brand-mid">
+        <p class="brand-tag">轻量、清晰的桌面语音。<br>打开频道，即刻开聊。</p>
+        <div class="waves" aria-hidden="true">
+          <span style="--i:0"></span><span style="--i:1"></span><span style="--i:2"></span><span style="--i:3"></span>
+          <span style="--i:4"></span><span style="--i:5"></span><span style="--i:6"></span><span style="--i:7"></span>
+        </div>
+      </div>
+      <div class="brand-foot">© 2026 LiteTalk</div>
+    </aside>
+
+    <!-- 表单区 -->
+    <main class="panel">
+      <div class="views">
+
+        <!-- 登录 / 注册 -->
+        <section class="view active" id="view-auth">
+          <div class="seg" id="seg">
+            <div class="seg-thumb"></div>
+            <button type="button" class="on" id="tab-login">登录</button>
+            <button type="button" id="tab-register">注册</button>
+          </div>
+
+          <!-- 登录表单 -->
+          <form id="form-login" novalidate>
+            <div class="field" data-check="email">
+              <label>邮箱</label>
+              <div class="input-wrap">
+                <i data-lucide="mail"></i>
+                <input type="email" name="email" placeholder="you@example.com" autocomplete="email">
+              </div>
+              <p class="field-err">请输入有效的邮箱地址</p>
+            </div>
+            <div class="field" data-check="password">
+              <label>密码</label>
+              <div class="input-wrap">
+                <i data-lucide="lock-keyhole"></i>
+                <input type="password" name="password" placeholder="请输入密码" autocomplete="current-password">
+                <button type="button" class="eye" tabindex="-1"><i data-lucide="eye"></i></button>
+              </div>
+              <p class="field-err">密码至少 8 位</p>
+            </div>
+            <div class="opt-row">
+              <label class="check"><input type="checkbox" checked><span class="box"><i data-lucide="check"></i></span>记住我</label>
+              <button type="button" class="link" data-goto="view-forgot">忘记密码？</button>
+            </div>
+            <button type="submit" class="btn-primary"><span class="spinner"></span><span class="btn-text">登录</span></button>
+          </form>
+
+          <!-- 注册表单 -->
+          <form id="form-register" novalidate hidden>
+            <div class="field" data-check="name">
+              <label>昵称</label>
+              <div class="input-wrap">
+                <i data-lucide="user-round"></i>
+                <input type="text" name="nickname" placeholder="2–16 个字符" maxlength="16">
+              </div>
+              <p class="field-err">昵称需为 2–16 个字符</p>
+            </div>
+            <div class="field" data-check="email">
+              <label>邮箱</label>
+              <div class="code-row">
+                <div class="input-wrap">
+                  <i data-lucide="mail"></i>
+                  <input type="email" name="email" placeholder="you@example.com" autocomplete="email">
+                </div>
+                <button type="button" class="code-btn">发送验证码</button>
+              </div>
+              <p class="field-err">请输入有效的邮箱地址</p>
+            </div>
+            <div class="field" data-check="code">
+              <label>邮箱验证码</label>
+              <div class="input-wrap">
+                <i data-lucide="shield-check"></i>
+                <input type="text" name="code" placeholder="6 位数字" maxlength="6" inputmode="numeric">
+              </div>
+              <p class="field-err">请输入 6 位验证码</p>
+            </div>
+            <div class="field" data-check="password">
+              <label>设置密码</label>
+              <div class="input-wrap">
+                <i data-lucide="lock-keyhole"></i>
+                <input type="password" name="password" placeholder="至少 8 位，建议混合字母与数字" autocomplete="new-password">
+                <button type="button" class="eye" tabindex="-1"><i data-lucide="eye"></i></button>
+              </div>
+              <div class="strength"><i></i><i></i><i></i></div>
+              <p class="field-err">密码至少 8 位</p>
+            </div>
+            <button type="submit" class="btn-primary" style="margin-top:6px"><span class="spinner"></span><span class="btn-text">创建账号</span></button>
+          </form>
+        </section>
+
+        <!-- 找回密码 -->
+        <section class="view" id="view-forgot">
+          <button type="button" class="back-link" data-goto="view-auth"><i data-lucide="arrow-left"></i>返回登录</button>
+          <h2 class="view-title">重置密码</h2>
+          <p class="view-sub">验证码将发送到你的注册邮箱</p>
+          <form id="form-forgot" novalidate>
+            <div class="field" data-check="email">
+              <label>邮箱</label>
+              <div class="code-row">
+                <div class="input-wrap">
+                  <i data-lucide="mail"></i>
+                  <input type="email" name="email" placeholder="you@example.com">
+                </div>
+                <button type="button" class="code-btn">发送验证码</button>
+              </div>
+              <p class="field-err">请输入有效的邮箱地址</p>
+            </div>
+            <div class="field" data-check="code">
+              <label>邮箱验证码</label>
+              <div class="input-wrap">
+                <i data-lucide="shield-check"></i>
+                <input type="text" name="code" placeholder="6 位数字" maxlength="6" inputmode="numeric">
+              </div>
+              <p class="field-err">请输入 6 位验证码</p>
+            </div>
+            <div class="field" data-check="password">
+              <label>新密码</label>
+              <div class="input-wrap">
+                <i data-lucide="lock-keyhole"></i>
+                <input type="password" name="password" placeholder="至少 8 位" autocomplete="new-password">
+                <button type="button" class="eye" tabindex="-1"><i data-lucide="eye"></i></button>
+              </div>
+              <p class="field-err">密码至少 8 位</p>
+            </div>
+            <button type="submit" class="btn-primary" style="margin-top:6px"><span class="spinner"></span><span class="btn-text">重置密码</span></button>
+          </form>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"><i data-lucide="circle-check"></i><span id="toast-text"></span></div>
+
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+(function(){
+  if (window.lucide) lucide.createIcons();
+
+  var $ = function(s, r){ return (r||document).querySelector(s); };
+  var $$ = function(s, r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+
+  /* ---------- 视图切换 ---------- */
+  function goto(id){
+    $$('.view').forEach(function(v){ v.classList.toggle('active', v.id === id); });
+  }
+  $$('[data-goto]').forEach(function(b){
+    b.addEventListener('click', function(){ goto(b.dataset.goto); });
+  });
+
+  /* ---------- 登录/注册分段切换 ---------- */
+  var seg = $('#seg'), formLogin = $('#form-login'), formReg = $('#form-register');
+  $('#tab-login').addEventListener('click', function(){
+    seg.classList.remove('reg');
+    $('#tab-login').classList.add('on'); $('#tab-register').classList.remove('on');
+    formLogin.hidden = false; formReg.hidden = true;
+  });
+  $('#tab-register').addEventListener('click', function(){
+    seg.classList.add('reg');
+    $('#tab-register').classList.add('on'); $('#tab-login').classList.remove('on');
+    formReg.hidden = false; formLogin.hidden = true;
+  });
+
+  /* ---------- 密码可见性 ---------- */
+  $$('.eye').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var input = btn.parentElement.querySelector('input');
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.innerHTML = '<i data-lucide="' + (show ? 'eye-off' : 'eye') + '"></i>';
+      if (window.lucide) lucide.createIcons();
+    });
+  });
+
+  /* ---------- 校验 ---------- */
+  var emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  function validate(field){
+    var kind = field.dataset.check;
+    var input = field.querySelector('input');
+    var v = input.value.trim(), ok = true;
+    if (kind === 'email') ok = emailRe.test(v);
+    else if (kind === 'password') ok = v.length >= 8;
+    else if (kind === 'code') ok = /^\d{6}$/.test(v);
+    else if (kind === 'name') ok = v.length >= 2 && v.length <= 16;
+    field.classList.toggle('invalid', !ok);
+    return ok;
+  }
+  $$('.field input').forEach(function(inp){
+    inp.addEventListener('input', function(){ inp.closest('.field').classList.remove('invalid'); });
+  });
+
+  /* ---------- Toast ---------- */
+  var toast = $('#toast'), toastText = $('#toast-text'), toastTimer = null;
+  function showToast(msg, isErr){
+    toastText.textContent = msg;
+    toast.classList.toggle('err', !!isErr);
+    var icon = toast.querySelector('svg, i');
+    if (icon){
+      var holder = document.createElement('i');
+      holder.setAttribute('data-lucide', isErr ? 'circle-alert' : 'circle-check');
+      icon.replaceWith(holder);
+      if (window.lucide) lucide.createIcons();
+    }
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toast.classList.remove('show'); }, 2200);
+  }
+
+  /* ---------- 发送验证码倒计时 ---------- */
+  $$('.code-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var field = btn.closest('form').querySelector('.field[data-check="email"]');
+      if (!validate(field)) return;
+      var left = 60;
+      btn.disabled = true;
+      btn.textContent = left + 's';
+      showToast('验证码已发送（演示）');
+      var t = setInterval(function(){
+        left--;
+        if (left <= 0){ clearInterval(t); btn.disabled = false; btn.textContent = '重新发送'; }
+        else btn.textContent = left + 's';
+      }, 1000);
+    });
+  });
+
+  /* ---------- 密码强度 ---------- */
+  var regPwd = formReg.querySelector('input[name="password"]');
+  var strength = formReg.querySelector('.strength');
+  regPwd.addEventListener('input', function(){
+    var v = regPwd.value, s = 0;
+    if (v.length >= 8) s++;
+    if (/\d/.test(v) && /[a-zA-Z]/.test(v)) s++;
+    if (v.length >= 12 && /[^a-zA-Z0-9]/.test(v)) s++;
+    strength.className = 'strength' + (s ? ' s' + s : '');
+  });
+
+  /* ---------- 提交（演示） ---------- */
+  function fakeSubmit(form, done){
+    var fields = $$('.field', form), ok = true;
+    fields.forEach(function(f){ if (!validate(f)) ok = false; });
+    if (!ok) return;
+    var btn = form.querySelector('.btn-primary');
+    btn.disabled = true; btn.classList.add('loading');
+    setTimeout(function(){
+      btn.disabled = false; btn.classList.remove('loading');
+      done();
+    }, 900);
+  }
+
+  formLogin.addEventListener('submit', function(e){
+    e.preventDefault();
+    fakeSubmit(formLogin, function(){ showToast('登录成功（演示）'); });
+  });
+
+  formReg.addEventListener('submit', function(e){
+    e.preventDefault();
+    fakeSubmit(formReg, function(){
+      showToast('注册成功，请登录');
+      $('#tab-login').click();
+      formLogin.querySelector('input[name="email"]').value = formReg.querySelector('input[name="email"]').value;
+    });
+  });
+
+  $('#form-forgot').addEventListener('submit', function(e){
+    e.preventDefault();
+    fakeSubmit($('#form-forgot'), function(){
+      showToast('密码已重置，请使用新密码登录');
+      goto('view-auth');
+    });
+  });
+})();
+</script>
+</body>
+</html>
