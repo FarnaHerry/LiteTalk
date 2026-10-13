@@ -314,6 +314,16 @@ func (p *Pipeline) Speaking() bool { return p.dsp.Speaking() }
 // ReadPlayback 从播放环读出解码后的采样（测试/null 汇用），返回采样数。
 func (p *Pipeline) ReadPlayback(out []int16) int { return p.playRing.Read(out) }
 
+// WritePlayback 向播放环写入外部混音后的采样（M2 混音器出口；Loopback=false
+// 时播放环无其他写者）。返回实际写入数，环满短写部分计入 PlaybackDropped。
+func (p *Pipeline) WritePlayback(pcm []int16) int {
+	n := p.playRing.Write(pcm)
+	if d := len(pcm) - n; d > 0 {
+		p.stats.PlaybackDropped.Add(uint64(d))
+	}
+	return n
+}
+
 // ProcessPCM 同步注入 PCM（长度须为 480 的整数倍）走完 DSP→编码→(回环)解码
 // 全链路，不经过采集设备与采集环。用于算法链路测试与离线处理。
 // 不得与 Start 并发使用。

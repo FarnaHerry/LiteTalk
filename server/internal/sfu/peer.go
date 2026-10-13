@@ -1,0 +1,242 @@
+package sfu
+
+import (
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
+
+// Peer 房间中的一个成员：每客户端恰好一条 PeerConnection
+// （一条上行 track，N 条下行 track，§5.2）。
+//
+// 重协商与防 glare：
+//   - 初始协商由客户端发 offer（rtc.offer C→S），SFU 应答；
+//   - 初始 answer 之后只允许 SFU 侧发 offer（OnNegotiationNeeded → 防抖 → negotiate）；
+//   - negotiate 与 answer 应用互斥：非 stable 状态时置 negotiateAgain，
+//     answer 应用完毕后补做一次，避免 offer 在途时叠加 offer。
+type Peer struct {
+	userID string
+	room   *Room
+	pc     *webrtc.PeerConnection
+	signal SignalSender
+
+	// debounce 合并突发 OnNegotiationNeeded（如第三人加入时多条 AddTrack）为一次 offer
+	debounce func(func())
+
+	mu                sync.Mutex
+	inbound           []*webrtc.TrackRemote                  // 本成员上行轨道
+	outbound          map[string]*webrtc.TrackLocalStaticRTP // 源 userID → 下行轨道
+	pendingCandidates []webrtc.ICECandidateInit              // 初始 answer 前到达的 trickle 候选
+	initialAnswered   bool
+	negotiateAgain    bool
+	closed            bool
+}
+
+func newPeer(room *Room, userID string, sig SignalSender) (*Peer, error) {
+	pc, err := room.sfu.api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		return nil, fmt.Errorf("创建 PeerConnection 失败: %w", err)
+	}
+	p := &Peer{
+		userID:   userID,
+		room:     room,
+		pc:       pc,
+		signal:   sig,
+		outbound: make(map[string]*webrtc.TrackLocalStaticRTP),
+		debounce: newDebouncer(50 * time.Millisecond),
+	}
+
+	// SFU 侧 trickle：候选随收随发
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			return
+		}
+		sig.SendCandidate(c.ToJSON())
+	})
+
+	// SFU 主导的协商：AddTrack 后触发，防抖合并为一次 offer
+	pc.OnNegotiationNeeded(func() {
+		p.debounce(p.negotiate)
+	})
+
+	// 上行轨道到达 → 登记 + 给房间其他成员建转发路由 + 起透传循环
+	pc.OnTrack(func(remote *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return
+		}
+		p.inbound = append(p.inbound, remote)
+		p.mu.Unlock()
+
+		p.room.sfu.log.Printf("sfu: %s 上行轨道就绪 kind=%s ssrc=%d（房间 %s）",
+			p.userID, remote.Kind(), remote.SSRC(), p.room.id)
+
+		// 对端 SR 等 RTCP 仅 drain，防读缓冲淤积
+		go drainRTCPReceiver(receiver)
+		p.room.addRoutesFrom(p.userID, remote)
+		go p.room.forward(p.userID, remote)
+	})
+
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		p.room.sfu.log.Printf("sfu: %s 连接状态 %s（房间 %s）", p.userID, state, p.room.id)
+		// M2：断连清理由 WS 层驱动；ICE 失败仅记录，待 M3 接入 ICE restart
+	})
+
+	return p, nil
+}
+
+// handleInitialOffer 处理客户端初始 offer（每个 peer 仅一次），返回 answer SDP。
+func (p *Peer) handleInitialOffer(sdp string) (string, error) {
+	p.mu.Lock()
+	if p.initialAnswered {
+		p.mu.Unlock()
+		return "", errors.New("重复的初始 rtc.offer（初始协商后只允许 SFU 发 offer）")
+	}
+	p.mu.Unlock()
+
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeOffer,
+		SDP:  sdp,
+	}); err != nil {
+		return "", fmt.Errorf("设置远端 offer 失败: %w", err)
+	}
+	answer, err := p.pc.CreateAnswer(nil)
+	if err != nil {
+		return "", fmt.Errorf("创建 answer 失败: %w", err)
+	}
+	if err := p.pc.SetLocalDescription(answer); err != nil {
+		return "", fmt.Errorf("设置本地 answer 失败: %w", err)
+	}
+
+	// 补投初始协商完成前到达的 trickle 候选
+	p.mu.Lock()
+	pending := p.pendingCandidates
+	p.pendingCandidates = nil
+	p.initialAnswered = true
+	p.mu.Unlock()
+	for _, c := range pending {
+		if err := p.pc.AddICECandidate(c); err != nil {
+			p.room.sfu.log.Printf("sfu: %s 补投 ICE 候选失败: %v", p.userID, err)
+		}
+	}
+	return answer.SDP, nil
+}
+
+// handleAnswer 应用客户端对 SFU 重协商 offer 的 answer。
+func (p *Peer) handleAnswer(sdp string) error {
+	p.mu.Lock()
+	if !p.initialAnswered {
+		p.mu.Unlock()
+		return errors.New("初始协商尚未完成，忽略 rtc.answer")
+	}
+	p.mu.Unlock()
+
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeAnswer,
+		SDP:  sdp,
+	}); err != nil {
+		return fmt.Errorf("应用 rtc.answer 失败: %w", err)
+	}
+
+	// offer 在途期间被跳过的协商，回到 stable 后补做一次
+	p.mu.Lock()
+	again := p.negotiateAgain
+	p.negotiateAgain = false
+	p.mu.Unlock()
+	if again {
+		p.debounce(p.negotiate)
+	}
+	return nil
+}
+
+// negotiate SFU 侧发 offer（重协商唯一入口）。
+func (p *Peer) negotiate() {
+	p.mu.Lock()
+	if p.closed || !p.initialAnswered {
+		p.mu.Unlock()
+		return
+	}
+	if p.pc.SignalingState() != webrtc.SignalingStateStable {
+		// 已有 offer 在途：记账，等 answer 回来后补做
+		p.negotiateAgain = true
+		p.mu.Unlock()
+		return
+	}
+	p.mu.Unlock()
+
+	offer, err := p.pc.CreateOffer(nil)
+	if err != nil {
+		p.room.sfu.log.Printf("sfu: %s 创建重协商 offer 失败: %v", p.userID, err)
+		return
+	}
+	if err := p.pc.SetLocalDescription(offer); err != nil {
+		p.room.sfu.log.Printf("sfu: %s 设置重协商 offer 失败: %v", p.userID, err)
+		return
+	}
+	p.signal.SendOffer(offer.SDP)
+}
+
+// addICECandidate 应用客户端 trickle 候选；初始 answer 前先缓存。
+func (p *Peer) addICECandidate(c webrtc.ICECandidateInit) error {
+	p.mu.Lock()
+	if !p.initialAnswered {
+		p.pendingCandidates = append(p.pendingCandidates, c)
+		p.mu.Unlock()
+		return nil
+	}
+	p.mu.Unlock()
+	if err := p.pc.AddICECandidate(c); err != nil {
+		return fmt.Errorf("添加 ICE 候选失败: %w", err)
+	}
+	return nil
+}
+
+// close 关闭 PeerConnection。inbound 读循环随之报错退出，转发自然停止。
+func (p *Peer) close() {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.closed = true
+	p.mu.Unlock()
+	_ = p.pc.Close()
+}
+
+// drainRTCPSender 读空某 RTPSender 的 RTCP（RR/NACK 等），防接收缓冲淤积。
+func drainRTCPSender(sender *webrtc.RTPSender) {
+	buf := make([]byte, 1500)
+	for {
+		if _, _, err := sender.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
+// drainRTCPReceiver 读空某 RTPReceiver 的 RTCP（对端 SR 等）。
+func drainRTCPReceiver(receiver *webrtc.RTPReceiver) {
+	buf := make([]byte, 1500)
+	for {
+		if _, _, err := receiver.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
+// newDebouncer 返回一个防抖调用器：窗口期内的多次调用合并为最后一次执行。
+func newDebouncer(d time.Duration) func(func()) {
+	var mu sync.Mutex
+	var timer *time.Timer
+	return func(f func()) {
+		mu.Lock()
+		defer mu.Unlock()
+		if timer != nil {
+			timer.Stop()
+		}
+		timer = time.AfterFunc(d, f)
+	}
+}
