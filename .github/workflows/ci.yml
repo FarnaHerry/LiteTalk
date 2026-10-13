@@ -136,9 +136,17 @@ jobs:
       - name: 安装前端依赖
         working-directory: client/frontend
         run: pnpm install --frozen-lockfile
-      # windows-latest 不保证 makensis 在 PATH，用 choco 安装 NSIS
+      # windows-latest 不保证 makensis 在 PATH：choco 安装后显式加入 NSIS 目录并验证
       - name: 安装 NSIS
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $nsisDir = @("C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS") |
+            Where-Object { Test-Path "$_\makensis.exe" } | Select-Object -First 1
+          if (-not $nsisDir) { throw "NSIS 安装后未找到 makensis.exe" }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+          $env:PATH = "$nsisDir;$env:PATH"
+          makensis /VERSION
       - name: wails build（含 NSIS 安装器）
         working-directory: client
         run: wails build -platform windows/amd64 -nsis
