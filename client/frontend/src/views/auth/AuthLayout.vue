@@ -34,7 +34,7 @@ onMounted(async () => {
     <!-- 悬浮窗控（问题 5：登录页也能最小化/关闭；close 走问题 4 兜底链） -->
     <div class="win-controls">
       <button title="最小化" @click="goApp().WindowMinimize()"><Minus :size="15" /></button>
-      <button class="wc-close" title="关闭" @click="closeWithHint(toast)"><X :size="15" /></button>
+      <button class="wc-close" title="关闭" @click="closeWithHint()"><X :size="15" /></button>
     </div>
     <Toast ref="toast" />
 

@@ -18,7 +18,7 @@ const toast = ref<InstanceType<typeof Toast>>()
     <div class="tb-controls">
       <button title="最小化" @click="goApp().WindowMinimize()"><Minus :size="15" /></button>
       <button title="最大化" @click="goApp().WindowMaximize()"><Square :size="15" /></button>
-      <button class="tb-close" title="关闭" @click="closeWithHint(toast)"><X :size="15" /></button>
+      <button class="tb-close" title="关闭" @click="closeWithHint()"><X :size="15" /></button>
     </div>
     <Toast ref="toast" />
   </header>
