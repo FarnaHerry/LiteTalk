@@ -61,6 +61,29 @@ func (e Envelope) Decode(v any) error {
 
 // ---- 各消息 data 载荷 ----
 
+// UserBrief hello.user 子对象（与服务端 wire 对齐：id + nickname）。
+type UserBrief struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+}
+
+// HelloData hello 载荷：鉴权成功后下发的全量初始数据（M3 前 servers/friends 恒空）。
+type HelloData struct {
+	User     UserBrief      `json:"user"`
+	Servers  []any          `json:"servers"`
+	Friends  []any          `json:"friends"`
+	Presence map[string]any `json:"presence"`
+}
+
+// ChatMessageData chat.message 载荷。
+type ChatMessageData struct {
+	ID        string    `json:"id"`
+	ChannelID string    `json:"channel_id"`
+	Content   string    `json:"content"`
+	TS        int64     `json:"ts"`
+	User      UserBrief `json:"user"`
+}
+
 // SDPData 是 rtc.offer / rtc.answer 的载荷。
 type SDPData struct {
 	SDP string `json:"sdp"`

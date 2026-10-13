@@ -1,6 +1,5 @@
 // 轻音 LiteTalk 服务端入口
-// M2 阶段：healthz + WS 信令（GET /ws）+ 自研 Pion SFU + TURN 短期凭证（POST /api/v1/rtc/credentials）。
-// 后续里程碑扩展：REST API（chi）、JWT 鉴权、MySQL/Redis。
+// M3 阶段：healthz + WS 信令（GET /ws）+ 自研 Pion SFU + TURN 短期凭证 + 全量 REST API（账号/社交/组织）。
 package main
 
 import (
@@ -16,9 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/OpenALC/LiteTalk/server/internal/api"
+	"github.com/OpenALC/LiteTalk/server/internal/auth"
 	"github.com/OpenALC/LiteTalk/server/internal/rtcapi"
 	"github.com/OpenALC/LiteTalk/server/internal/sfu"
 	"github.com/OpenALC/LiteTalk/server/internal/signal"
+	"github.com/OpenALC/LiteTalk/server/internal/store"
 )
 
 // version 由构建时 -X main.version= 注入，默认 dev
@@ -29,6 +31,40 @@ const defaultAddr = ":8077"
 
 func main() {
 	addr := envOr("LITETALK_ADDR", defaultAddr)
+
+	// ---- 持久化（MySQL + Redis，env 注入 DSN；不可用时内存降级） ----
+	var st store.Store
+	var kv store.KV
+	if dsn := os.Getenv("LITETALK_MYSQL_DSN"); dsn != "" {
+		my, err := store.OpenMySQL(dsn)
+		if err != nil {
+			log.Fatalf("MySQL 连接失败: %v", err)
+		}
+		defer my.Close()
+		migDir := envOr("LITETALK_MIGRATIONS_DIR", "migrations")
+		if err := my.Migrate(context.Background(), migDir); err != nil {
+			log.Fatalf("数据库迁移失败: %v", err)
+		}
+		st = my
+		log.Println("持久化: MySQL")
+	} else {
+		st = store.NewMem()
+		log.Println("持久化: 内存（设置 LITETALK_MYSQL_DSN 启用 MySQL）")
+	}
+	if rdb, err := store.OpenRedis(os.Getenv("LITETALK_REDIS_ADDR")); err == nil {
+		defer rdb.Close()
+		kv = rdb
+		log.Println("KV: Redis")
+	} else {
+		kv = store.NewMem()
+		log.Println("KV: 内存（LITETALK_REDIS_ADDR 不可达，降级内存）")
+	}
+
+	// ---- 账号安全 ----
+	jwtSigner := auth.NewJWT(os.Getenv("LITETALK_JWT_SECRET"))
+	refreshStore := auth.NewRefreshStore(kv)
+	codes := auth.NewEmailCodes(kv)
+	limits := auth.NewRateLimit(kv)
 
 	// SFU：ICE-Lite + 单 UDP mux（§5.2）
 	sfuInst, err := sfu.New(sfu.Config{
@@ -42,20 +78,71 @@ func main() {
 	}
 	defer sfuInst.Close()
 
-	// WS 信令 hub（M2 开发令牌 dev-<username>，M3 换 JWT）
-	hub := signal.NewHub(sfuInst, signal.DevAuthenticator, log.Default(), 0)
+	// WS 信令 hub：默认 JWT 鉴权；LITETALK_DEV_AUTH=1 时 dev- 前缀令牌兜底（JWT 优先）。
+	var authenticator signal.Authenticator
+	if os.Getenv("LITETALK_DEV_AUTH") == "1" {
+		authenticator = func(token string) (string, string, error) {
+			if !strings.HasPrefix(token, "dev-") {
+				if claims, err := jwtSigner.ParseAccess(token); err == nil {
+					return strconv.FormatInt(claims.UserID, 10), claims.Nickname, nil
+				}
+			}
+			return signal.DevAuthenticator(token)
+		}
+		log.Println("WS 鉴权: JWT + dev-token 兜底（开发模式）")
+	} else {
+		authenticator = func(token string) (string, string, error) {
+			claims, err := jwtSigner.ParseAccess(token)
+			if err != nil {
+				return "", "", signal.ErrUnauthorized
+			}
+			return strconv.FormatInt(claims.UserID, 10), claims.Nickname, nil
+		}
+		log.Println("WS 鉴权: JWT")
+	}
+	hub := signal.NewHub(sfuInst, authenticator, log.Default(), 0)
 
 	// TURN 短期凭证签发（coturn use-auth-secret，§5.4）
+	var rtcAuth rtcapi.UserFromToken
+	if os.Getenv("LITETALK_DEV_AUTH") == "1" {
+		rtcAuth = func(token string) (string, error) {
+			if !strings.HasPrefix(token, "dev-") {
+				if claims, err := jwtSigner.ParseAccess(token); err == nil {
+					return strconv.FormatInt(claims.UserID, 10), nil
+				}
+			}
+			return devUserID(token)
+		}
+	} else {
+		rtcAuth = func(token string) (string, error) {
+			claims, err := jwtSigner.ParseAccess(token)
+			if err != nil {
+				return "", err
+			}
+			return strconv.FormatInt(claims.UserID, 10), nil
+		}
+	}
 	rtcCreds := rtcapi.NewHandler(rtcapi.Config{
 		Secret:   os.Getenv("LITETALK_TURN_SECRET"),
 		TurnURLs: splitList(envOr("LITETALK_TURN_URLS", "turn:127.0.0.1:3478")),
 		StunURLs: splitList(envOr("LITETALK_STUN_URLS", "stun:127.0.0.1:3478")),
 		TTL:      12 * time.Hour,
-	}, devUserID, log.Default())
+	}, rtcAuth, log.Default())
+
+	// REST API（§5.4 全量）
+	apiSrv := api.New(api.Config{
+		Store:   st,
+		JWT:     jwtSigner,
+		Refresh: refreshStore,
+		Codes:   codes,
+		Limits:  limits,
+		Log:     log.Default(),
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/healthz", healthzHandler)
 	mux.Handle("POST /api/v1/rtc/credentials", rtcCreds)
+	mux.Handle("/api/v1/", apiSrv.Handler())
 	mux.HandleFunc("GET /ws", hub.ServeWS)
 
 	srv := &http.Server{

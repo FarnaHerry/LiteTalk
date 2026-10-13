@@ -1,0 +1,48 @@
+<script setup lang="ts">
+// TitleBar 自定义标题栏（无边框窗口拖拽区 + 最小化/最大化/关闭）。
+// Wails v2 无边框窗口：CSS -webkit-app-region: drag。
+import { Minus, Square, X, AudioWaveform } from 'lucide-vue-next'
+import { goApp } from '../api/bridge'
+</script>
+
+<template>
+  <header class="titlebar">
+    <span class="tb-logo"><AudioWaveform :size="11" /></span>
+    <span class="tb-name">轻音 LiteTalk</span>
+    <div class="tb-controls">
+      <button title="最小化" @click="goApp().WindowMinimize()"><Minus :size="15" /></button>
+      <button title="最大化" @click="goApp().WindowMaximize()"><Square :size="15" /></button>
+      <button class="tb-close" title="关闭到托盘" @click="goApp().WindowClose()"><X :size="15" /></button>
+    </div>
+  </header>
+</template>
+
+<style scoped>
+.titlebar {
+  height: 38px; flex: none;
+  display: flex; align-items: center;
+  padding: 0 6px 0 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 30;
+}
+.tb-logo {
+  width: 18px; height: 18px; border-radius: 5px;
+  background: var(--brand-500);
+  display: flex; align-items: center; justify-content: center;
+  margin-right: 8px;
+}
+.tb-logo :deep(svg) { color: #fff; }
+.tb-name { font-size: 12px; font-weight: 600; color: var(--ink-600); letter-spacing: 0.4px; }
+.tb-controls { margin-left: auto; display: flex; -webkit-app-region: no-drag; }
+.tb-controls button {
+  width: 42px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-400);
+  transition: background 0.15s, color 0.15s;
+}
+.tb-controls button:hover { background: var(--brand-50); color: var(--ink-900); }
+.tb-controls .tb-close:hover { background: var(--red); color: #fff; }
+</style>
