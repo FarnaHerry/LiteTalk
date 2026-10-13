@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -378,6 +379,14 @@ func (s *Session) SetPeerVolume(userID string, gain float64) {
 			in.SetGain(gain)
 		}
 	}
+}
+
+// RestartDevices 热切换采集/播放设备：管线设备流重启，编解码/混音状态保留。
+func (s *Session) RestartDevices(captureID, playbackID string) error {
+	if s.pipe == nil {
+		return errors.New("no pipeline")
+	}
+	return s.pipe.RestartDevices(captureID, playbackID)
 }
 
 // Muted / Deafened 本地状态查询。

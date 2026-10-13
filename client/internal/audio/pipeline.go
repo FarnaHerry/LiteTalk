@@ -145,6 +145,8 @@ type Pipeline struct {
 	capture  *Capture
 	playback *Playback
 
+	devMu sync.Mutex // 保护 capture/playback 字段（RestartDevices 与 captureLoop.wake 并发）
+
 	done    chan struct{}
 	wg      sync.WaitGroup
 	started atomic.Bool
@@ -264,6 +266,61 @@ func (p *Pipeline) Start() error {
 	return nil
 }
 
+// RestartDevices 热切换采集/播放设备：停掉当前设备流并按新 selector 重启，
+// 编码器/解码器/混音器/处理 goroutine 状态全部保留。selector 语义同
+// StartCapture/StartPlayback（空 = 默认设备；失败自动回退默认）。
+// 仅对 BackendDevice 有效；未 Start 时仅更新配置待下次 Start 生效。
+func (p *Pipeline) RestartDevices(captureSelector, playbackSelector string) error {
+	if p.closed.Load() {
+		return errors.New("pipeline closed")
+	}
+	p.cfg.CaptureSelector = captureSelector
+	p.cfg.PlaybackSelector = playbackSelector
+	if !p.started.Load() {
+		return nil // 尚未启动：仅记录选择器
+	}
+	if p.cfg.Backend != BackendDevice {
+		return errors.New("device restart only supported with BackendDevice")
+	}
+
+	// 停旧设备流（不动 done/captureLoop/codec/mixer）。
+	p.devMu.Lock()
+	oldCap, oldPlay := p.capture, p.playback
+	p.capture, p.playback = nil, nil
+	p.devMu.Unlock()
+	if oldCap != nil {
+		oldCap.Stop()
+	}
+	if oldPlay != nil {
+		oldPlay.Stop()
+	}
+
+	cap_, err := StartCapture(p.ctx, captureSelector, p.capRing, &p.stats)
+	if err != nil && captureSelector != "" {
+		// 设备消失/失效：回退默认设备。
+		p.cfg.CaptureSelector = ""
+		cap_, err = StartCapture(p.ctx, "", p.capRing, &p.stats)
+	}
+	if err != nil {
+		return fmt.Errorf("restart capture: %w", err)
+	}
+
+	play, err := StartPlayback(p.ctx, playbackSelector, p.playRing, &p.stats)
+	if err != nil && playbackSelector != "" {
+		p.cfg.PlaybackSelector = ""
+		play, err = StartPlayback(p.ctx, "", p.playRing, &p.stats)
+	}
+	if err != nil {
+		cap_.Stop()
+		return fmt.Errorf("restart playback: %w", err)
+	}
+
+	p.devMu.Lock()
+	p.capture, p.playback = cap_, play
+	p.devMu.Unlock()
+	return nil
+}
+
 // Stop 停止流与 goroutine（幂等）。codec 资源由 Close 释放。
 func (p *Pipeline) Stop() {
 	if p.started.CompareAndSwap(true, false) {
@@ -339,12 +396,14 @@ func (p *Pipeline) ProcessPCM(pcm []int16) error {
 }
 
 // captureLoop 声卡模式处理循环：被采集回调唤醒，按 10ms 帧消费采集环。
-func (p *Pipeline) captureLoop(wake <-chan struct{}) {
+// wake 每轮动态取当前设备的唤醒通道（RestartDevices 热切换后指向新设备）。
+func (p *Pipeline) captureLoop(_ <-chan struct{}) {
 	defer p.wg.Done()
 	timer := time.NewTimer(20 * time.Millisecond)
 	defer timer.Stop()
 	for {
 		timer.Reset(20 * time.Millisecond)
+		wake := p.currentWake()
 		select {
 		case <-p.done:
 			return
@@ -356,6 +415,17 @@ func (p *Pipeline) captureLoop(wake <-chan struct{}) {
 			p.processFrame(p.frame[:])
 		}
 	}
+}
+
+// currentWake 返回当前采集设备的唤醒通道（设备未就绪时返回 nil 通道，
+// select 将永久阻塞该分支，由兜底节拍驱动）。
+func (p *Pipeline) currentWake() <-chan struct{} {
+	p.devMu.Lock()
+	defer p.devMu.Unlock()
+	if p.capture == nil {
+		return nil
+	}
+	return p.capture.Wake()
 }
 
 // nullLoop 无声卡自检循环：10ms 节拍合成 440Hz 正弦+轻噪声帧注入管线，

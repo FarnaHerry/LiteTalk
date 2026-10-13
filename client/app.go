@@ -6,10 +6,12 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenALC/LiteTalk/client/internal/audio"
 	"github.com/OpenALC/LiteTalk/client/internal/state"
+	"github.com/OpenALC/LiteTalk/client/internal/tray"
 	"github.com/gen2brain/malgo"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -24,6 +26,9 @@ type App struct {
 
 	// hibernateOnMinimize 设置项「最小化时休眠界面（省内存）」，默认关闭。
 	hibernateOnMinimize bool
+
+	// forceQuit 托盘「退出」置位后 OnBeforeClose 放行真正关闭。
+	forceQuit atomic.Bool
 
 	api  *state.APIClient
 	sess *state.Session // 登录并连接信令后创建
@@ -40,7 +45,7 @@ func NewApp() *App {
 	return &App{}
 }
 
-// startup 启动回调：保存上下文、创建 API 客户端。
+// startup 启动回调：保存上下文、创建 API 客户端、启动系统托盘。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	base := os.Getenv("LITETALK_API")
@@ -48,33 +53,79 @@ func (a *App) startup(ctx context.Context) {
 		base = "http://127.0.0.1:8077"
 	}
 	a.api = state.NewAPIClient(base)
+
+	// 托盘独占 goroutine（systray.Run 需要自己的消息循环）。
+	go tray.Run(tray.Callbacks{
+		OnShow: func() {
+			runtime.WindowShow(a.ctx)
+			runtime.WindowUnminimise(a.ctx)
+			runtime.EventsEmit(a.ctx, "sys:wake")
+		},
+		OnToggleMute: func() bool {
+			a.mu.Lock()
+			s := a.sess
+			a.mu.Unlock()
+			if s == nil {
+				return false
+			}
+			muted := !s.Muted()
+			s.SetMute(muted)
+			return muted
+		},
+		OnQuit: func() {
+			a.forceQuit.Store(true)
+			runtime.Quit(a.ctx)
+		},
+		IsMuted: func() bool {
+			a.mu.Lock()
+			s := a.sess
+			a.mu.Unlock()
+			return s != nil && s.Muted()
+		},
+	})
+}
+
+// emitHibernate 若开启「最小化时休眠」则通知前端进入休眠态。
+func (a *App) emitHibernate() {
+	if a.hibernateOnMinimize {
+		runtime.EventsEmit(a.ctx, "sys:hibernate")
+	}
 }
 
 // onBeforeClose 拦截窗口关闭：隐藏到托盘而非退出。
+// 托盘「退出」置位 forceQuit 后放行真正关闭。
 func (a *App) onBeforeClose(ctx context.Context) bool {
+	if a.forceQuit.Load() {
+		return false // 真正退出
+	}
 	runtime.WindowHide(ctx)
+	a.emitHibernate()
 	return true
 }
 
 // ---------- 窗口控制（自定义标题栏调用） ----------
 
-// WindowMinimize 最小化窗口。
-func (a *App) WindowMinimize() { runtime.WindowMinimise(a.ctx) }
+// WindowMinimize 最小化窗口（设置开启时同步休眠界面）。
+func (a *App) WindowMinimize() {
+	runtime.WindowMinimise(a.ctx)
+	a.emitHibernate()
+}
 
 // WindowMaximize 最大化/还原。
 func (a *App) WindowMaximize() { runtime.WindowToggleMaximise(a.ctx) }
 
-// WindowClose 关闭（转隐藏到托盘）。
-func (a *App) WindowClose() { runtime.WindowHide(a.ctx) }
+// WindowClose 关闭（转隐藏到托盘；设置开启时同步休眠界面）。
+func (a *App) WindowClose() {
+	runtime.WindowHide(a.ctx)
+	a.emitHibernate()
+}
 
 // ---------- 设置 ----------
 
-// SetHibernateOnMinimize 设置「最小化时休眠界面」开关
+// SetHibernateOnMinimize 设置「最小化时休眠界面」开关。
+// 前端监听 sys:hibernate / sys:wake 事件切换休眠态（见 stores/hibernate.ts）。
 func (a *App) SetHibernateOnMinimize(enabled bool) {
 	a.hibernateOnMinimize = enabled
-	// TODO(M4)：enabled 时，最小化到托盘后前端切换到「休眠页」——
-	// 卸载业务组件、停止 rAF/定时器/动画、解除 Wails 事件订阅；
-	// 唤起时恢复休眠前的路由与状态（关键状态持久化 localStorage）。
 }
 
 // GetHibernateOnMinimize 读取「最小化时休眠界面」开关
@@ -315,6 +366,19 @@ func (a *App) SetPeerVolume(userID string, gain float64) {
 	if s != nil {
 		s.SetPeerVolume(userID, gain)
 	}
+}
+
+// SetAudioDevices 热切换采集/播放设备（设置页下拉即时应用）。
+// selector 为设备 ID 十六进制串或名称子串；空 = 默认设备。
+// 设备消失/失效时管线自动回退默认设备。
+func (a *App) SetAudioDevices(captureID, playbackID string) error {
+	a.mu.Lock()
+	s := a.sess
+	a.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("not connected")
+	}
+	return s.RestartDevices(captureID, playbackID)
 }
 
 // SendChat 发送文字消息。

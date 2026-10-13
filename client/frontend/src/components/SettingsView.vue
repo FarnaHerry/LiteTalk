@@ -6,9 +6,12 @@ import { X } from 'lucide-vue-next'
 import { goApp, type AudioDeviceDTO } from '../api/bridge'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/data'
+import { useHibernateStore } from '../stores/hibernate'
+import { HOTKEYS } from '../composables/useHotkeys'
 
 const auth = useAuthStore()
 const settings = useSettingsStore()
+const hibernateStore = useHibernateStore()
 const version = ref('dev')
 const hibernate = ref(false)
 const caps = ref<AudioDeviceDTO[]>([])
@@ -26,7 +29,13 @@ onMounted(async () => {
 
 async function toggleHibernate(v: boolean) {
   hibernate.value = v
+  hibernateStore.setEnabled(v)
   await goApp().SetHibernateOnMinimize(v)
+}
+
+// 设备下拉即时应用：切换即热重启设备流（编解码/混音状态保留）。
+async function applyDevice() {
+  await goApp().SetAudioDevices(settings.captureDevice, settings.playbackDevice)
 }
 </script>
 
@@ -65,13 +74,13 @@ async function toggleHibernate(v: boolean) {
         <h3>音频设备</h3>
         <div class="s-row">
           <div class="k">麦克风</div>
-          <select v-model="settings.captureDevice">
+          <select v-model="settings.captureDevice" @change="applyDevice">
             <option v-for="d in caps" :key="d.id" :value="d.id">{{ d.name }}</option>
           </select>
         </div>
         <div class="s-row">
           <div class="k">扬声器</div>
-          <select v-model="settings.playbackDevice">
+          <select v-model="settings.playbackDevice" @change="applyDevice">
             <option v-for="d in plays" :key="d.id" :value="d.id">{{ d.name }}</option>
           </select>
         </div>
@@ -94,8 +103,9 @@ async function toggleHibernate(v: boolean) {
 
       <section class="s-sec">
         <h3>快捷键</h3>
-        <div class="s-row"><div class="k">静音 / 取消静音</div><span class="v">Ctrl + M</span></div>
-        <div class="s-row"><div class="k">耳聋 / 取消耳聋</div><span class="v">Ctrl + D</span></div>
+        <div v-for="h in HOTKEYS" :key="h.id" class="s-row">
+          <div class="k">{{ h.label }}</div><span class="v">{{ h.combo }}</span>
+        </div>
       </section>
 
       <section class="s-sec">

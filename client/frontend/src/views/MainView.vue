@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // MainView 三栏主壳（对齐 Main.html）：标题栏 + 服务器栏 + 频道栏 +
 // 舞台（语音房间/文字聊天页签 + 浮动房间卡）+ 好友栏 + 设置浮层。
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   AudioLines, MessageCircle, Users, PhoneOff, UserRound,
 } from 'lucide-vue-next'
@@ -15,18 +15,54 @@ import SettingsView from '../components/SettingsView.vue'
 import { useVoiceStore } from '../stores/voice'
 import { useChatStore } from '../stores/chat'
 import { useAuthStore } from '../stores/auth'
+import { useHibernateStore } from '../stores/hibernate'
+import { useHotkeys } from '../composables/useHotkeys'
+import { goApp } from '../api/bridge'
 
 const voice = useVoiceStore()
 const chat = useChatStore()
 const auth = useAuthStore()
+const hibernate = useHibernateStore()
 
 const tab = ref<'voice' | 'chat'>('voice')
 const showSettings = ref(false)
 const showFriends = ref(true)
 
+// 快捷键：休眠态全部禁用。
+const hotkeysActive = computed(() => !hibernate.hibernated)
+useHotkeys(
+  {
+    mute: () => voice.setMute(!voice.muted),
+    deafen: () => voice.setDeafen(!voice.deafened),
+    dual: () => {
+      const allOff = !voice.dualOff
+      voice.setMute(allOff)
+      voice.setDeafen(allOff)
+    },
+    search: () => {
+      const el = document.querySelector<HTMLInputElement>('.f-search input')
+      el?.focus()
+    },
+    settings: () => (showSettings.value = true),
+  },
+  hotkeysActive,
+)
+
 onMounted(() => {
   voice.bindEvents()
   chat.bindEvents()
+  // 休眠态：卸载业务组件绑定；唤醒时恢复。
+  hibernate.bind((h) => {
+    if (h) {
+      voice.unbindEvents()
+      chat.unbindEvents()
+    } else {
+      voice.bindEvents()
+      chat.bindEvents()
+    }
+  })
+  hibernate.init()
+  goApp().GetHibernateOnMinimize().then((v) => hibernate.setEnabled(v))
 })
 
 async function leave() {
@@ -35,10 +71,10 @@ async function leave() {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ hibernated: hibernate.hibernated }">
     <TitleBar />
 
-    <div class="app">
+    <div v-if="!hibernate.hibernated" class="app">
       <ServerRail />
       <ChannelList />
 

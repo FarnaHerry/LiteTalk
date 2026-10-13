@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { eventsOn, goApp } from '../api/bridge'
+import { eventsOff, eventsOn, goApp } from '../api/bridge'
 import type { PeerView } from '../api/types'
 
 // voice 语音房状态：房间成员、说话/静音/耳聋、统计。
@@ -94,8 +94,15 @@ export const useVoiceStore = defineStore('voice', () => {
     })
   }
 
+  // unbindEvents 休眠态清理：解除全部事件订阅。
+  function unbindEvents() {
+    for (const n of ['voice:self', 'voice:peer-join', 'voice:peer-leave', 'voice:speaking', 'voice:stats']) {
+      eventsOff(n)
+    }
+  }
+
   return {
     channelId, members, muted, deafened, dualOff, latencyMs, connected,
-    selfId, setSelf, join, leave, setMute, setDeafen, setPeerVolume, bindEvents,
+    selfId, setSelf, join, leave, setMute, setDeafen, setPeerVolume, bindEvents, unbindEvents,
   }
 })

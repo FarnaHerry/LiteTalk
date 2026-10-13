@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { eventsOn, goApp } from '../api/bridge'
+import { eventsOff, eventsOn, goApp } from '../api/bridge'
 import type { ChatMessage } from '../api/types'
 
 export const useChatStore = defineStore('chat', () => {
@@ -20,5 +20,10 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
   }
 
-  return { messages, send, bindEvents, clear }
+  // unbindEvents 休眠态清理：解除事件订阅。
+  function unbindEvents() {
+    eventsOff('chat:message')
+  }
+
+  return { messages, send, bindEvents, unbindEvents, clear }
 })

@@ -16,6 +16,7 @@ type GoApp = {
   Logout(): Promise<void>
   GetMe(): Promise<UserProfile>
   ListAudioDevices(): Promise<{ capture: AudioDeviceDTO[]; playback: AudioDeviceDTO[] }>
+  SetAudioDevices(captureID: string, playbackID: string): Promise<void>
   JoinChannel(channelID: string): Promise<void>
   LeaveChannel(): Promise<void>
   SetMute(muted: boolean): Promise<void>
@@ -64,6 +65,7 @@ const mockApp: GoApp = {
   async GetMe() {
     return { id: 'dev', nickname: 'dev', tag: '0001', email: 'dev@example.com' }
   },
+  async SetAudioDevices() {},
   async ListAudioDevices() {
     return {
       capture: [{ id: 'default', name: '默认麦克风', is_default: true }],
@@ -90,4 +92,9 @@ export function isNative(): boolean {
 // eventsOn Wails 事件订阅（浏览器环境静默）。
 export function eventsOn(name: string, cb: (...args: unknown[]) => void) {
   window.runtime?.EventsOn(name, cb)
+}
+
+// eventsOff 取消事件订阅（休眠态清理用）。
+export function eventsOff(name: string) {
+  window.runtime?.EventsOff(name)
 }

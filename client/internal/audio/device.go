@@ -60,6 +60,27 @@ func (c *Context) Devices(kind malgo.DeviceType) ([]DeviceInfo, error) {
 	return out, nil
 }
 
+// pickDevice 按 selector 在设备列表中选设备（纯函数，便于单测）：
+// selector 为空 → -1（默认设备）；先精确匹配 ID，再大小写不敏感子串匹配名称；
+// 无匹配 → -2。
+func pickDevice(devices []DeviceInfo, selector string) int {
+	if selector == "" {
+		return -1
+	}
+	for i := range devices {
+		if devices[i].ID == selector {
+			return i
+		}
+	}
+	lower := strings.ToLower(selector)
+	for i := range devices {
+		if strings.Contains(strings.ToLower(devices[i].Name), lower) {
+			return i
+		}
+	}
+	return -2
+}
+
 // resolveDeviceID 把用户的选择器解析为 malgo 设备 ID 指针。
 // selector 为空 → nil（默认设备）；否则先精确匹配 ID 十六进制串，
 // 再大小写不敏感子串匹配设备名；都不中则报错并列出候选。
@@ -75,16 +96,12 @@ func (c *Context) resolveDeviceID(kind malgo.DeviceType, selector string) (*malg
 	if kind == malgo.Playback {
 		kindName = "playback"
 	}
+	list := make([]DeviceInfo, len(infos))
 	for i := range infos {
-		if infos[i].ID.String() == selector {
-			return &infos[i].ID, nil
-		}
+		list[i] = DeviceInfo{ID: infos[i].ID.String(), Name: infos[i].Name()}
 	}
-	lower := strings.ToLower(selector)
-	for i := range infos {
-		if strings.Contains(strings.ToLower(infos[i].Name()), lower) {
-			return &infos[i].ID, nil
-		}
+	if idx := pickDevice(list, selector); idx >= 0 {
+		return &infos[idx].ID, nil
 	}
 	names := make([]string, len(infos))
 	for i := range infos {
