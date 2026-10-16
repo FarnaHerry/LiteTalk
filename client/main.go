@@ -39,6 +39,11 @@ func main() {
 			// interceptClose 放行路径（关闭即退出/托盘不可用时托盘不可用）显式调 Quit。
 			DisableQuitOnLastWindowClosed: true,
 		},
+		Linux: application.LinuxOptions{
+			// v3 该选项是平台命名空间各自独立的（Windows/Linux 各一份）——
+			// 只设 Windows 的在 Linux 不生效，destroy 模式销毁窗口即退进程、托盘失声。
+			DisableQuitOnLastWindowClosed: true,
+		},
 	})
 
 	// 窗口创建与生命周期钩子注册在 App.buildWindow（托盘唤醒重建时复用）。

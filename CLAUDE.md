@@ -57,7 +57,7 @@ GH="/c/Users/Yang/AppData/Local/Microsoft/WinGet/Packages/GitHub.cli_Microsoft.W
 - Windows 上手动 `go build` 必须加 `-ldflags "-H=windowsgui"`，否则启动时会附带一个控制台窗口。
 - 构建标签：
   - Windows / macOS：`production`（选正式版 runtime.js）；
-  - **Linux 一律用 `gtk3`**（对应 WebKitGTK 4.1），打包用 `gtk3,production`。不要用 `server` 标签做 Linux 检查。
+  - **Linux 用默认 GTK4 栈**（WebKitGTK 6.0，不加额外标签），打包用 `production`。不要用 `server` 标签做 Linux 检查。
 - mingw ld 的 `claims to have 0xffff relocs` 警告无害。
 - 在 PowerShell 里跑基准测试时，模式参数必须加引号：`-bench="."`。
 
@@ -95,7 +95,7 @@ go run github.com/rhysd/actionlint/cmd/actionlint@latest
 | 检查 | `check-tag` | 只在标签推送时 | 是 | 校验标签符合版本规范 |
 | 检查 | `check-server` | 每次 push 和 PR | 是 | gofmt、`go mod tidy -diff`、vet、`test -race`、build |
 | 检查 | `check-frontend` | 每次 push 和 PR | 是 | `pnpm install --frozen-lockfile`、type-check、vitest、build，产出 `frontend-dist` artifact |
-| 检查 | `check-client-linux` | 每次 push 和 PR | 是 | gofmt、tidy、vet、`test -race`、build（`-tags gtk3`） |
+| 检查 | `check-client-linux` | 每次 push 和 PR | 是 | gofmt、tidy、vet、`test -race`、build（默认 GTK4 栈，无额外标签） |
 | 检查 | `check-client-windows` | 每次 push 和 PR | 是 | vet、`test -race`、production GUI build。**这是真实 cgo Opus、DPAPI、WASAPI 唯一被测试的地方** |
 | 打包 | `package-server` | 标签 | 是 | linux amd64/arm64，tar.gz 内含二进制和 `migrations/` |
 | 打包 | `package-client-windows` | 标签 | 是 | exe 加 NSIS 安装器（版本号从标签注入）加绿色版 zip |
